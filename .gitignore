@@ -1,0 +1,40 @@
+# Credenciales y sesión
+.env*
+!.env.example
+*.env
+!*.env.example
+data/tokens.json
+data/*.json
+.streamlit/secrets.toml
+
+# Datos personales
+data/
+*.db
+*.db-wal
+*.db-shm
+*.csv
+*.fit
+*.gpx
+*.tcx
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Entornos virtuales
+venv/
+.venv/
+env/
+
+# IDE / sistema
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Exportaciones e información personal del atleta
+artifacts/
+planning_bloque_1.json
