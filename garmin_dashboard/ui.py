@@ -68,6 +68,20 @@ def apply_theme() -> None:
         color: {P["primary"]};
         box-shadow: none;
     }}
+    div[data-testid="stSegmentedControl"] {{
+        background: #151E2B;
+        border-radius: 10px;
+        padding: 4px;
+        border: 1px solid #273244;
+    }}
+    div[data-testid="stSegmentedControl"] button {{
+        color: {P["muted"]};
+        border-radius: 8px;
+    }}
+    div[data-testid="stSegmentedControl"] button[aria-pressed="true"] {{
+        background: #263348;
+        color: {P["primary"]};
+    }}
     h1, h2, h3 {{
         color: {P["text"]};
         font-family: 'Space Grotesk', 'Segoe UI', sans-serif;
@@ -108,12 +122,12 @@ def style_figure(fig: go.Figure, height: int = CHART_HEIGHT) -> go.Figure:
             color=P["text"], family="DM Sans, Segoe UI, sans-serif", size=13
         ),
         colorway=[
+            P["power_avg"],
+            P["power_normalized"],
+            P["power_best"],
             P["ctl"],
             P["atl"],
             P["tsb"],
-            P["sleep"],
-            P["resting_hr"],
-            P["load"],
         ],
         legend=dict(
             orientation="h",
@@ -309,7 +323,7 @@ def wellness_figure(
                 mode="lines",
                 line=dict(color=P["tsb"], width=2.0, dash="dot"),
                 fill="tozeroy",
-                fillcolor="rgba(56, 189, 248, 0.14)",
+                fillcolor="rgba(167, 139, 250, 0.14)",
             ),
             row=2,
             col=1,
@@ -381,8 +395,26 @@ def wellness_figure(
             )
 
     fig.update_yaxes(title_text="CTL / ATL", row=1, col=1)
-    fig.update_yaxes(
-        title_text="TSB", row=2, col=1, zeroline=True, zerolinecolor="#526174"
+    fig.update_yaxes(title_text="TSB", row=2, col=1, zeroline=False)
+    fig.add_hline(
+        y=-30,
+        row=2,
+        col=1,
+        line=dict(color="#EF4444", width=1.7, dash="dash"),
+        annotation_text="−30",
+        annotation_position="top right",
+        annotation_font_color="#EF4444",
+        annotation_font_size=11,
+    )
+    fig.add_hline(
+        y=0,
+        row=2,
+        col=1,
+        line=dict(color=P["primary"], width=1.8),
+        annotation_text="0",
+        annotation_position="top right",
+        annotation_font_color=P["primary"],
+        annotation_font_size=11,
     )
     fig.update_yaxes(title_text="horas", row=3, col=1)
     fig.update_yaxes(title_text="ppm", row=4, col=1)

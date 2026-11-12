@@ -1,18 +1,21 @@
 # Dashboard local de ciclismo
 
 Aplicación en Streamlit para consultar entrenamientos de Garmin Connect e
-intervals.icu, con almacenamiento local SQLite.
+intervals.icu. Los datos se almacenan localmente en una base SQLite.
 
-## Funciones
+## Secciones
 
-- **Resumen:** volumen semanal, reparto por deporte e interior/exterior.
-- **Forma:** CTL, ATL, TSB y tendencia descriptiva del CTL a una semana.
-- **Ciclismo:** curva de potencia, carga y volumen.
-- **Zonas:** tiempo por zonas de frecuencia cardiaca y potencia.
-- **Actividades:** sesiones, perfiles disponibles, comparación con planificación
-  y resumen de actividad en TXT/JSON.
-- **Salud:** sueño, calidad, frecuencia cardiaca en reposo, HRV y peso.
-- **Planificación:** sesiones previstas enlazables con actividades realizadas.
+- **Recuperación → Forma**: vista inicial con CTL, ATL y TSB, carga, tendencia
+  de la forma y métricas recientes de recuperación.
+- **Recuperación → Salud**: sueño, calidad del sueño, frecuencia cardiaca en
+  reposo, HRV, peso y Body Battery cuando Garmin proporciona esos datos.
+- **Entrenamiento → Ciclismo**: curva de potencia, volumen, carga, comparación
+  de ciclismo en rodillo y exterior, y distribución agregada por zonas de FC y
+  potencia.
+- **Entrenamiento → Actividades**: listado filtrable, ficha y perfiles de cada
+  sesión, zonas de la actividad y comparación con la planificación cuando hay
+  datos disponibles.
+- **Planificación**: objetivos y seguimiento semanal del plan.
 
 ## Requisitos y puesta en marcha
 
@@ -25,7 +28,11 @@ pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-Rellena `.env` con las credenciales que quieras usar. Después, inicia la app:
+Rellena `.env` con las credenciales que vayas a usar. Garmin se configura con
+`GARMIN_EMAIL` y `GARMIN_PASSWORD`; intervals.icu es opcional y se configura
+con `INTERVALS_API_KEY` y, si procede, `INTERVALS_ATHLETE_ID`.
+
+Para sincronizar y abrir el dashboard:
 
 ```powershell
 python main.py login
@@ -35,32 +42,31 @@ python main.py sync-intervals --days 365
 python -m streamlit run app.py
 ```
 
-También puedes abrir `iniciar_dashboard.bat` en Windows o ejecutar
-`bash iniciar_dashboard.sh` desde Git Bash. La app se abre en
+También puedes iniciar Streamlit con `iniciar_dashboard.bat` en Windows o
+ejecutar `bash iniciar_dashboard.sh` desde Git Bash. La dirección local es
 `http://localhost:8501`.
 
 ## Datos y privacidad
 
-La base SQLite, los tokens de Garmin, las credenciales, el plan personal y las
-exportaciones se mantienen fuera de Git. `.gitignore` excluye `.env`, `data/`,
-`artifacts/` y `planning_bloque_1.json`. No publiques credenciales ni datos
-personales al subir el código a GitHub. El repositorio no tendrá un remoto
-configurado hasta que elijas o crees uno.
-
-Para configurar un repositorio GitHub después de crearlo:
-
-```bash
-git remote add origin <URL_DEL_REPOSITORIO>
-git push -u origin master
-```
+El proyecto está pensado para ejecutarse localmente. `.gitignore` excluye
+`.env`, tokens, la carpeta `data/` (incluidas las bases SQLite), las
+exportaciones de `artifacts/` y el plan personal `planning_bloque_1.json`.
+`.env.example` sí forma parte del repositorio y solo contiene valores de
+ejemplo. No añadas credenciales, tokens ni datos personales al repositorio.
 
 ## Datos de demostración
 
 Puedes crear una base sintética sin conectar cuentas:
 
-```bash
+```powershell
 python scripts/seed_demo.py --force
+$env:GARMIN_DB_PATH = "data/demo.db"
+$env:GARMIN_DEMO = "1"
+python -m streamlit run app.py
 ```
 
-Después inicia Streamlit con `GARMIN_DB_PATH=data/demo.db` y
-`GARMIN_DEMO=1` configurados en el entorno.
+En Git Bash, configura las variables para el comando así:
+
+```bash
+GARMIN_DB_PATH=data/demo.db GARMIN_DEMO=1 python -m streamlit run app.py
+```

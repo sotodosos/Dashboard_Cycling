@@ -403,7 +403,7 @@ def _wellness_figure(
                 mode="lines",
                 line=dict(color=P["tsb"], width=2.0, dash="dot"),
                 fill="tozeroy",
-                fillcolor="rgba(56, 189, 248, 0.14)",
+                fillcolor="rgba(167, 139, 250, 0.14)",
             ),
             row=2,
             col=1,
@@ -467,7 +467,27 @@ def _wellness_figure(
             )
 
     fig.update_yaxes(title_text="CTL / ATL", row=1, col=1)
-    fig.update_yaxes(title_text="TSB", row=2, col=1, zeroline=True, zerolinecolor="#526174")
+    fig.update_yaxes(title_text="TSB", row=2, col=1, zeroline=False)
+    fig.add_hline(
+        y=-30,
+        row=2,
+        col=1,
+        line=dict(color="#EF4444", width=1.7, dash="dash"),
+        annotation_text="−30",
+        annotation_position="top right",
+        annotation_font_color="#EF4444",
+        annotation_font_size=11,
+    )
+    fig.add_hline(
+        y=0,
+        row=2,
+        col=1,
+        line=dict(color=P["primary"], width=1.8),
+        annotation_text="0",
+        annotation_position="top right",
+        annotation_font_color=P["primary"],
+        annotation_font_size=11,
+    )
     fig.update_yaxes(title_text="horas", row=3, col=1)
     fig.update_yaxes(title_text="ppm", row=4, col=1)
     fig.update_xaxes(range=[start, end], tickformat="%d %b %y", row=4, col=1)
@@ -704,9 +724,9 @@ st.sidebar.divider()
 
 if has_garmin and has_intervals:
     source_choice = st.sidebar.radio(
-        "Origen de actividades",
+        "Actividades de",
         ["Ambas fuentes", "Solo Garmin", "Solo intervals.icu"],
-        help="intervals.icu aporta potencia, carga y zonas de potencia.",
+        help="Filtra las actividades. Salud y forma usan la fuente disponible; verás su procedencia en cada vista.",
     )
 elif has_intervals:
     source_choice = "Solo intervals.icu"
@@ -751,6 +771,10 @@ if not filtered.empty:
     filtered = filtered[_focus_mask(filtered, focus)].copy()
 
 filtered_daily = an.filter_daily(daily, start_date, end_date)
+filtered_intervals_wellness = intervals_wellness[
+    (intervals_wellness["date"] >= pd.Timestamp(start_date))
+    & (intervals_wellness["date"] <= pd.Timestamp(end_date))
+].copy()
 filtered_wellness = wellness[
     (wellness["date"] >= pd.Timestamp(start_date))
     & (wellness["date"] <= pd.Timestamp(end_date))
@@ -787,20 +811,48 @@ if activities.empty and wellness.empty and daily.empty:
 
 
 # --------------------------------------------------------------------------- #
-# Portada: aptitud, sueño y FC en reposo
+# Navegación del dashboard
 # --------------------------------------------------------------------------- #
 
-tab_form, tab_bike, tab_zones, tab_activities, tab_health, tab_plan = st.tabs(
-    ["Forma", "Ciclismo", "Zonas", "Actividades", "Salud", "Planificación"],
-    on_change="rerun",
-    key="dashboard_tabs",
-    default="Forma",
+main_section = st.segmented_control(
+    "Sección",
+    ["Entrenamiento", "Recuperación", "Planificación"],
+    default="Recuperación",
+    key="main_section_v3",
+    label_visibility="collapsed",
+    width="stretch",
 )
+training_view = None
+recovery_view = None
+if main_section == "Entrenamiento":
+    training_view = st.segmented_control(
+        "Entrenamiento",
+        ["Ciclismo", "Actividades"],
+        default="Ciclismo",
+        key="training_view_v3",
+        label_visibility="collapsed",
+        width="stretch",
+    )
+elif main_section == "Recuperación":
+    recovery_view = st.segmented_control(
+        "Recuperación",
+        ["Forma", "Salud"],
+        default="Forma",
+        key="recovery_view_v3",
+        label_visibility="collapsed",
+        width="stretch",
+    )
 
-if tab_form.open:
-    with tab_form:
+
+if main_section == "Recuperación" and recovery_view == "Forma":
+    with st.container():
         recovery_source = (
             filtered_wellness if not filtered_wellness.empty else filtered_daily
+        )
+        st.caption(
+            "La forma (CTL/ATL/TSB) procede de intervals.icu; Garmin puede completar sueño y recuperación."
+            if not filtered_intervals_wellness.empty
+            else "Fuente de sueño y recuperación: Garmin. No hay datos de forma de intervals.icu en este periodo."
         )
         recent_recovery = recovery_source[
             recovery_source["date"] >= pd.Timestamp(end_date - timedelta(days=6))
@@ -824,7 +876,6 @@ if tab_form.open:
             pd.to_numeric(recent_recovery[recovery_hrv_column], errors="coerce").mean()
             if recovery_hrv_column in recent_recovery else float("nan")
         )
-        weight_info = an.weight_trend(filtered_wellness)
         effective_ftp = (
             _setting_value(cycling_settings, "indoor_ftp")
             or _setting_value(cycling_settings, "ftp")
@@ -832,15 +883,9 @@ if tab_form.open:
         _metric_row(
             [
                 ("Sueño medio · 7 días", f"{_fmt(sleep_mean, 1)} h", None),
-                ("Calidad de sueño · 7 días", f"{_fmt(sleep_score_mean)} / 100", None),
+                ("Calidad de sueño · 7 días", _fmt(sleep_score_mean), None),
                 ("FC reposo · 7 días", f"{_fmt(resting_hr_mean)} ppm", None),
                 ("HRV · 7 días", f"{_fmt(hrv_mean)} ms", None),
-                (
-                    "Último peso",
-                    f"{_fmt(weight_info['latest'], 1)} kg"
-                    if weight_info["latest"] is not None else "–",
-                    None,
-                ),
                 ("FTP utilizado", f"{_fmt(effective_ftp)} W" if effective_ftp else "–", "Se prioriza el FTP interior; si no existe, se usa el FTP general."),
             ]
         )
@@ -888,14 +933,23 @@ if tab_form.open:
                     ]
                 )
 
-                fig = go.Figure()
+                fig = make_subplots(
+                    rows=2,
+                    cols=1,
+                    shared_xaxes=True,
+                    vertical_spacing=0.12,
+                    row_heights=[0.66, 0.34],
+                    subplot_titles=("CTL y ATL · carga", "TSB · forma"),
+                )
                 fig.add_trace(
                     go.Scatter(
                         x=form["date"],
                         y=form["ctl"],
                         name="CTL · fitness",
                         line=dict(color=P["ctl"], width=3.2),
-                    )
+                    ),
+                    row=1,
+                    col=1,
                 )
                 recent_ctl = form[
                     form["date"] >= pd.Timestamp(end_date - timedelta(days=29))
@@ -918,7 +972,7 @@ if tab_form.open:
                         mode="lines",
                         name="Tendencia CTL · 30 días",
                         line=dict(color=P["primary"], width=2, dash="dash"),
-                    ))
+                    ), row=1, col=1)
                     fig.add_trace(go.Scatter(
                         x=[recent_ctl.iloc[-1]["date"], recent_ctl.iloc[-1]["date"] + pd.Timedelta(days=7)],
                         y=[float(recent_ctl.iloc[-1]["ctl"]), ctl_week_estimate],
@@ -926,14 +980,16 @@ if tab_form.open:
                         name="CTL según tendencia · +7 días",
                         line=dict(color=P["primary"], width=2.5, dash="dot"),
                         marker=dict(size=7),
-                    ))
+                    ), row=1, col=1)
                 fig.add_trace(
                     go.Scatter(
                         x=form["date"],
                         y=form["atl"],
                         name="ATL · fatiga",
                         line=dict(color=P["atl"], width=2.2),
-                    )
+                    ),
+                    row=1,
+                    col=1,
                 )
                 fig.add_trace(
                     go.Scatter(
@@ -942,19 +998,34 @@ if tab_form.open:
                         name="TSB · forma",
                         line=dict(color=P["tsb"], width=2, dash="dot"),
                         fill="tozeroy",
-                        fillcolor="rgba(56, 189, 248, 0.14)",
-                        yaxis="y2",
-                    )
+                        fillcolor="rgba(167, 139, 250, 0.14)",
+                    ),
+                    row=2,
+                    col=1,
                 )
-                fig.update_layout(
-                    yaxis2=dict(
-                        overlaying="y",
-                        side="right",
-                        showgrid=False,
-                        title="TSB",
-                    )
+                fig.update_yaxes(title_text="CTL / ATL", row=1, col=1)
+                fig.update_yaxes(title_text="TSB", zeroline=False, row=2, col=1)
+                fig.add_hline(
+                    y=-30,
+                    row=2,
+                    col=1,
+                    line=dict(color="#EF4444", width=1.7, dash="dash"),
+                    annotation_text="−30",
+                    annotation_position="top right",
+                    annotation_font_color="#EF4444",
+                    annotation_font_size=11,
                 )
-                fig.update_xaxes(tickformat="%d %b %y")
+                fig.add_hline(
+                    y=0,
+                    row=2,
+                    col=1,
+                    line=dict(color=P["primary"], width=1.8),
+                    annotation_text="0",
+                    annotation_position="top right",
+                    annotation_font_color=P["primary"],
+                    annotation_font_size=11,
+                )
+                fig.update_xaxes(tickformat="%d %b %y", row=2, col=1)
                 st.subheader("Evolución de la forma")
                 if ctl_week_estimate is not None:
                     st.caption(
@@ -963,7 +1034,8 @@ if tab_form.open:
                         f"{_fmt(ctl_week_estimate, 1)}. Es una extrapolación descriptiva; "
                         "no incorpora entrenamientos futuros."
                     )
-                st.plotly_chart(_style(fig, height=420), width="stretch")
+                fig.update_annotations(font=dict(size=12, color=P["muted"]))
+                st.plotly_chart(_style(fig, height=500), width="stretch")
 
                 forecast_rows = []
                 latest_ctl_row = form.dropna(subset=["ctl", "atl"]).iloc[-1]
@@ -1063,7 +1135,7 @@ if tab_form.open:
                             y="ramp_rate",
                             labels={"date": "", "ramp_rate": "CTL / semana"},
                         )
-                        fig.update_traces(line_color=P["tsb"], fillcolor="rgba(56,189,248,0.18)")
+                        fig.update_traces(line_color=P["tsb"], fillcolor="rgba(167,139,250,0.18)")
                         fig.update_xaxes(tickformat="%d %b %y")
                         st.plotly_chart(_style(fig), width="stretch")
 
@@ -1089,8 +1161,8 @@ if tab_form.open:
 
     # ------------------------------- Ciclismo --------------------------------- #
 
-if tab_bike.open:
-    with tab_bike:
+if main_section == "Entrenamiento" and training_view == "Ciclismo":
+    with st.container():
         cycling = filtered[filtered["is_cycling"]].copy()
         if cycling.empty:
             st.info("No hay sesiones de ciclismo en el periodo seleccionado.")
@@ -1157,12 +1229,16 @@ if tab_bike.open:
             st.subheader("Curva de potencia")
             st.caption(
                 "Compara la mejor potencia media de los últimos 30 días con el "
-                "récord de cada duración en todo el histórico cargado. No es una predicción de rendimiento."
+                "récord de cada duración de los últimos 6 meses. No es una predicción de rendimiento."
             )
             curve_source = garmin if source_choice != "Solo intervals.icu" else intervals_acts
             if not curve_source.empty:
+                curve_start = (
+                    pd.Timestamp(end_date) - pd.DateOffset(months=6)
+                ).date()
                 curve_source = curve_source[
                     (curve_source["date"] <= end_date)
+                    & (curve_source["date"] >= curve_start)
                     & curve_source["is_cycling"]
                 ].copy()
                 curve_source = curve_source[_focus_mask(curve_source, focus)]
@@ -1184,7 +1260,7 @@ if tab_bike.open:
                 fig.add_trace(go.Scatter(
                     x=durations,
                     y=historical_curve["watts"],
-                    name="Histórico cargado",
+                    name="Últimos 6 meses",
                     mode="lines+markers",
                     customdata=duration_labels,
                     line={"color": P["muted"], "width": 2},
@@ -1219,41 +1295,31 @@ if tab_bike.open:
                 st.info("No hay registros de mejor potencia por duración en el histórico. Garmin solo permite comparar esta curva si esos valores están incluidos en el resumen de actividad.")
 
             cycling["duration_h"] = cycling["duration_min"] / 60
-            week_distance, week_hours = st.columns(2)
-            with week_distance:
-                st.subheader("Distancia por semana")
-                weekly_distance = an.weekly_volume(cycling, "distance_km")
-                if weekly_distance.empty:
-                    st.plotly_chart(_empty_fig("Sin datos"), width="stretch")
-                else:
-                    fig = px.bar(
-                        weekly_distance,
-                        x="week",
-                        y="distance_km",
-                        color="sport",
-                        color_discrete_map=an.SPORT_COLORS,
-                        labels={"week": "", "distance_km": "km", "sport": "Disciplina"},
-                    )
-                    fig.update_layout(barmode="stack")
-                    fig.update_xaxes(tickformat="%d %b %y")
-                    st.plotly_chart(_style(fig), width="stretch")
-            with week_hours:
-                st.subheader("Horas por semana")
-                weekly_hours = an.weekly_volume(cycling, "duration_h")
-                if weekly_hours.empty:
-                    st.plotly_chart(_empty_fig("Sin datos"), width="stretch")
-                else:
-                    fig = px.bar(
-                        weekly_hours,
-                        x="week",
-                        y="duration_h",
-                        color="sport",
-                        color_discrete_map=an.SPORT_COLORS,
-                        labels={"week": "", "duration_h": "horas", "sport": "Disciplina"},
-                    )
-                    fig.update_layout(barmode="stack")
-                    fig.update_xaxes(tickformat="%d %b %y")
-                    st.plotly_chart(_style(fig), width="stretch")
+            st.subheader("Volumen semanal")
+            volume_mode = st.segmented_control(
+                "Métrica de volumen",
+                ["Horas", "Distancia"],
+                default="Horas",
+                key="weekly_volume_metric",
+                label_visibility="collapsed",
+            )
+            volume_field = "duration_h" if volume_mode == "Horas" else "distance_km"
+            volume_label = "horas" if volume_mode == "Horas" else "km"
+            weekly_volume = an.weekly_volume(cycling, volume_field)
+            if weekly_volume.empty:
+                st.plotly_chart(_empty_fig("Sin datos"), width="stretch")
+            else:
+                fig = px.bar(
+                    weekly_volume,
+                    x="week",
+                    y=volume_field,
+                    color="sport",
+                    color_discrete_map=an.SPORT_COLORS,
+                    labels={"week": "", volume_field: volume_label, "sport": "Disciplina"},
+                )
+                fig.update_layout(barmode="stack")
+                fig.update_xaxes(tickformat="%d %b %y")
+                st.plotly_chart(_style(fig), width="stretch")
 
             left, right = st.columns(2)
             with left:
@@ -1270,18 +1336,18 @@ if tab_bike.open:
                         go.Scatter(
                             x=power["week"],
                             y=power["avg_power_w"],
-                            name="Media",
+                            name="Potencia media",
                             mode="lines+markers",
-                            line=dict(color=an.SPORT_COLORS["Ciclismo"], width=2.4),
+                            line=dict(color=P["power_avg"], width=2.4),
                         )
                     )
                     fig.add_trace(
                         go.Scatter(
                             x=power["week"],
                             y=power["weighted_avg_power_w"],
-                            name="Normalizada",
+                            name="Potencia normalizada",
                             mode="lines+markers",
-                            line=dict(color=P["tsb"], width=2.4),
+                            line=dict(color=P["power_normalized"], width=2.4),
                         )
                     )
                     fig.update_xaxes(tickformat="%d %b %y")
@@ -1338,15 +1404,17 @@ if tab_bike.open:
                 if sport_share.empty or sport_share["distance_km"].sum() <= 0:
                     st.plotly_chart(_empty_fig("Sin datos de distancia"), width="stretch")
                 else:
-                    fig = px.pie(
+                    fig = px.bar(
                         sport_share,
-                        names="sport",
-                        values="distance_km",
-                        hole=0.55,
+                        x="distance_km",
+                        y="sport",
+                        orientation="h",
                         color="sport",
                         color_discrete_map=an.SPORT_COLORS,
+                        labels={"sport": "", "distance_km": "km"},
                     )
-                    fig.update_traces(textposition="inside", textinfo="percent")
+                    fig.update_layout(showlegend=False)
+                    fig.update_yaxes(autorange="reversed")
                     st.plotly_chart(_style(fig), width="stretch")
             with split_col:
                 st.markdown("**Horas de rodillo y exterior**")
@@ -1382,275 +1450,208 @@ if tab_bike.open:
             )
 
 
-    # -------------------------------- Zonas ----------------------------------- #
-
-if tab_zones.open:
-    with tab_zones:
-        cycling = filtered[filtered["is_cycling"]].copy()
-        garmin_zone_activities = garmin[
-            (garmin["date"] >= start_date) & (garmin["date"] <= end_date)
-        ].copy() if not garmin.empty else garmin.copy()
-        intervals_zone_activities = intervals_acts[
-            (intervals_acts["date"] >= start_date) & (intervals_acts["date"] <= end_date)
-        ].copy() if not intervals_acts.empty else intervals_acts.copy()
-        if not garmin_zone_activities.empty:
-            garmin_zone_activities = garmin_zone_activities[_focus_mask(garmin_zone_activities, focus)]
-            garmin_zone_activities = garmin_zone_activities[garmin_zone_activities["is_cycling"]]
-        if not intervals_zone_activities.empty:
-            intervals_zone_activities = intervals_zone_activities[_focus_mask(intervals_zone_activities, focus)]
-            intervals_zone_activities = intervals_zone_activities[intervals_zone_activities["is_cycling"]]
-        garmin_hr_available = (
-            not garmin_zone_activities.empty
-            and an.zone_minutes(garmin_zone_activities, "hr")["minutes"].sum() > 0
-        )
-        prefer_intervals_hr = (
-            source_choice == "Solo intervals.icu" or not garmin_hr_available
-        )
-        if prefer_intervals_hr and not intervals_zone_activities.empty:
-            hr_zone_source = intervals_zone_activities
-            hr_source_label = "intervals.icu · tiempos registrados en sus zonas"
-        else:
-            hr_zone_source = garmin_zone_activities
-            hr_source_label = (
-                "Garmin · tiempos registrados en 5 zonas"
-                if garmin_hr_available
-                else "Sin tiempos de zona de FC en este rango"
+        with st.expander("Distribución por zonas", expanded=False):
+            cycling = filtered[filtered["is_cycling"]].copy()
+            garmin_zone_activities = garmin[
+                (garmin["date"] >= start_date) & (garmin["date"] <= end_date)
+            ].copy() if not garmin.empty else garmin.copy()
+            intervals_zone_activities = intervals_acts[
+                (intervals_acts["date"] >= start_date) & (intervals_acts["date"] <= end_date)
+            ].copy() if not intervals_acts.empty else intervals_acts.copy()
+            if not garmin_zone_activities.empty:
+                garmin_zone_activities = garmin_zone_activities[_focus_mask(garmin_zone_activities, focus)]
+                garmin_zone_activities = garmin_zone_activities[garmin_zone_activities["is_cycling"]]
+            if not intervals_zone_activities.empty:
+                intervals_zone_activities = intervals_zone_activities[_focus_mask(intervals_zone_activities, focus)]
+                intervals_zone_activities = intervals_zone_activities[intervals_zone_activities["is_cycling"]]
+            garmin_hr_available = (
+                not garmin_zone_activities.empty
+                and an.zone_minutes(garmin_zone_activities, "hr")["minutes"].sum() > 0
             )
-        power_zone_source = (
-            intervals_zone_activities
-            if not intervals_zone_activities.empty
-            else cycling
-        )
-        power_source_label = (
-            "intervals.icu · distribución registrada"
-            if power_zone_source is intervals_zone_activities
-            else "Distribución disponible"
-        )
-        ftp_for_zones = (
-            _setting_value(cycling_settings, "indoor_ftp")
-            or _setting_value(cycling_settings, "ftp")
-        )
-        if cycling_settings is not None:
-            _metric_row(
-                [
-                    (
-                        "FTP para zonas",
-                        f"{_fmt(ftp_for_zones)} W"
-                        if ftp_for_zones
-                        else "–",
-                        "FTP interior; general como fallback",
-                    ),
-                    (
-                        "LTHR",
-                        f"{_fmt(_setting_value(cycling_settings, 'lthr'))} ppm"
-                        if _setting_value(cycling_settings, "lthr")
-                        else "–",
-                        "Frecuencia cardiaca de umbral",
-                    ),
-                    (
-                        "FC máx",
-                        f"{_fmt(_setting_value(cycling_settings, 'max_hr'))} ppm"
-                        if _setting_value(cycling_settings, "max_hr")
-                        else "–",
-                        None,
-                    ),
-                ]
+            prefer_intervals_hr = (
+                source_choice == "Solo intervals.icu" or not garmin_hr_available
             )
-
-        lthr = _setting_value(cycling_settings, "lthr")
-        hr_model = an.zone_model(cycling_settings, "hr")
-        power_model = an.zone_model(cycling_settings, "power")
-        with st.expander("Zonas de entrenamiento de referencia", expanded=False):
-            zone_hr_col, zone_power_col = st.columns(2)
-            with zone_hr_col:
-                if hr_model:
-                    st.caption(
-                        f"FC con LTHR de {lthr:.0f} ppm y límites Friel "
-                        "85/90/95/100 %. Los minutos proceden de los contadores de "
-                        "zona de la fuente elegida; no se reclasifican sin datos "
-                        "segundo a segundo."
-                    )
-                    st.dataframe(
-                        pd.DataFrame(
-                            {
-                                "Zona FC": [zone["label"] for zone in hr_model],
-                                "Rango": [zone["range"] for zone in hr_model],
-                            }
-                        ),
-                        hide_index=True,
-                        width="stretch",
-                    )
-                else:
-                    st.warning(
-                        "Sin LTHR configurado en intervals.icu: no se pueden "
-                        "calcular las 5 zonas de FC. Añade LTHR en los ajustes "
-                        "del deporte."
-                    )
-            with zone_power_col:
-                if power_model:
-                    st.caption(
-                        f"Potencia Coggan con FTP de {ftp_for_zones:.0f} W. Se "
-                        "usan los bordes de potencia de intervals.icu cuando "
-                        "llegan como porcentaje de FTP; si no, los límites "
-                        "Coggan 55/75/90/105/120/150 %."
-                    )
-                    st.dataframe(
-                        pd.DataFrame(
-                            {
-                                "Zona Coggan": [
-                                    zone["label"] for zone in power_model
-                                ],
-                                "Rango": [zone["range"] for zone in power_model],
-                            }
-                        ),
-                        hide_index=True,
-                        width="stretch",
-                    )
-                else:
-                    st.warning(
-                        "Sin FTP configurado en intervals.icu: no se pueden "
-                        "calcular las 7 zonas de potencia."
-                    )
-
-
-        if cycling.empty:
-            st.info("No hay sesiones de ciclismo en el periodo seleccionado.")
-        else:
-            hr_zones = an.zone_minutes(hr_zone_source, "hr")
-            power_zones = an.zone_minutes(power_zone_source, "power")
-
-            left, right = st.columns(2)
-            with left:
-                st.subheader("Zonas de frecuencia cardiaca · 5 zonas LTHR")
-                st.caption(hr_source_label)
-                if hr_zones["minutes"].sum() == 0:
-                    st.caption("Sin tiempos de zona de FC en las actividades.")
-                else:
-                    st.plotly_chart(
-                        _zone_bar(hr_zones, "hr", cycling_settings), width="stretch"
-                    )
-                    hr_view = _zone_frame(hr_zones, cycling_settings, "hr")
-                    hr_view["minutos"] = hr_view["minutes"].round(0)
-                    hr_view["%"] = (hr_view["share"] * 100).round(1)
-                    st.dataframe(
-                        hr_view[["label", "rango", "minutos", "%"]].rename(
-                            columns={
-                                "label": "Zona",
-                                "rango": "Rango",
-                                "minutos": "Minutos",
-                            }
-                        ),
-                        hide_index=True,
-                        width="stretch",
-                    )
-
-            with right:
-                st.subheader("Zonas de potencia · Coggan 7 zonas")
-                st.caption(power_source_label)
-                if power_zones["minutes"].sum() == 0:
-                    st.caption(
-                        "Sin zonas de potencia. Sincroniza intervals.icu para "
-                        "obtenerlas."
-                    )
-                else:
-                    st.plotly_chart(
-                        _zone_bar(
-                            power_zones,
-                            "power",
-                            cycling_settings,
-                        ),
-                        width="stretch",
-                    )
-                    power_view = _zone_frame(
-                        power_zones,
-                        cycling_settings,
-                        "power",
-                    )
-                    power_view["minutos"] = power_view["minutes"].round(0)
-                    power_view["%"] = (power_view["share"] * 100).round(1)
-                    st.dataframe(
-                        power_view[["label", "rango", "minutos", "%"]].rename(
-                            columns={
-                                "label": "Zona",
-                                "rango": "Rango",
-                                "minutos": "Minutos",
-                            }
-                        ),
-                        hide_index=True,
-                        width="stretch",
-                    )
-
-            st.subheader("Zonas de una actividad")
-            options = {
-                f"{row.start:%d/%m/%Y} · {row.sport} · "
-                f"{row.activity_name if isinstance(row.activity_name, str) else 'Sin nombre'}": row.activity_id
-                for row in cycling.sort_values("start", ascending=False).itertuples()
-            }
-            selected_label = st.selectbox("Actividad", list(options))
-            selected = cycling[cycling["activity_id"] == options[selected_label]].iloc[0]
-            selected_garmin = None
-            if not garmin.empty and pd.notna(selected.get("start")):
-                candidates = garmin[garmin["is_cycling"]].copy()
-                candidates["start_gap_s"] = (candidates["start"] - selected["start"]).abs().dt.total_seconds()
-                candidates = candidates[candidates["start_gap_s"] <= 90]
-                if not candidates.empty:
-                    selected_garmin = candidates.sort_values("start_gap_s").iloc[0]
-            hr_detail = (
-                an.activity_zone_minutes(selected_garmin, "hr")
-                if selected_garmin is not None
-                else pd.DataFrame(columns=["zone", "label", "minutes"])
-            )
-            power_detail = an.activity_zone_minutes(selected, "power")
-            selected_indoor = bool(selected.get("indoor"))
-            hr_detail = _zone_frame(hr_detail, cycling_settings, "hr")
-            power_detail = _zone_frame(
-                power_detail, cycling_settings, "power", indoor=selected_indoor
-            )
-            hr_detail["display_zone"] = hr_detail.apply(lambda row: f"{row['label']}\n{row['rango']}" if row["rango"] else row["label"], axis=1)
-            power_detail["display_zone"] = power_detail.apply(lambda row: f"{row['label']}\n{row['rango']}" if row["rango"] else row["label"], axis=1)
-
-            fig = make_subplots(
-                rows=1,
-                cols=2,
-                subplot_titles=("FC", "Potencia"),
-            )
-            if hr_detail["minutes"].sum() > 0:
-                fig.add_trace(
-                    go.Bar(
-                        x=hr_detail["display_zone"],
-                        y=hr_detail["minutes"],
-                        marker_color=an.HR_ZONE_COLORS[: len(hr_detail)],
-                        name="FC",
-                        hovertemplate="%{x}: %{y:.0f} min<extra></extra>",
-                    ),
-                    row=1,
-                    col=1,
-                )
-            if power_detail["minutes"].sum() > 0:
-                fig.add_trace(
-                    go.Bar(
-                        x=power_detail["display_zone"],
-                        y=power_detail["minutes"],
-                        marker_color=an.POWER_ZONE_COLORS[: len(power_detail)],
-                        name="Potencia",
-                        hovertemplate="%{x}: %{y:.0f} min<extra></extra>",
-                    ),
-                    row=1,
-                    col=2,
-                )
-            if hr_detail["minutes"].sum() == 0 and power_detail["minutes"].sum() == 0:
-                st.caption("Esta actividad no tiene tiempos en zonas.")
+            if prefer_intervals_hr and not intervals_zone_activities.empty:
+                hr_zone_source = intervals_zone_activities
+                hr_source_label = "intervals.icu · tiempos registrados en sus zonas"
             else:
-                fig.update_yaxes(title_text="minutos", row=1, col=1)
-                fig.update_yaxes(title_text="minutos", row=1, col=2)
-                fig.update_layout(showlegend=False)
-                st.plotly_chart(_style(fig, height=340), width="stretch")
+                hr_zone_source = garmin_zone_activities
+                hr_source_label = (
+                    "Garmin · tiempos registrados en 5 zonas"
+                    if garmin_hr_available
+                    else "Sin tiempos de zona de FC en este rango"
+                )
+            power_zone_source = (
+                intervals_zone_activities
+                if not intervals_zone_activities.empty
+                else cycling
+            )
+            power_source_label = (
+                "intervals.icu · distribución registrada"
+                if power_zone_source is intervals_zone_activities
+                else "Distribución disponible"
+            )
+            ftp_for_zones = (
+                _setting_value(cycling_settings, "indoor_ftp")
+                or _setting_value(cycling_settings, "ftp")
+            )
+            if cycling_settings is not None:
+                _metric_row(
+                    [
+                        (
+                            "FTP para zonas",
+                            f"{_fmt(ftp_for_zones)} W"
+                            if ftp_for_zones
+                            else "–",
+                            "FTP interior; general como fallback",
+                        ),
+                        (
+                            "LTHR",
+                            f"{_fmt(_setting_value(cycling_settings, 'lthr'))} ppm"
+                            if _setting_value(cycling_settings, "lthr")
+                            else "–",
+                            "Frecuencia cardiaca de umbral",
+                        ),
+                        (
+                            "FC máx",
+                            f"{_fmt(_setting_value(cycling_settings, 'max_hr'))} ppm"
+                            if _setting_value(cycling_settings, "max_hr")
+                            else "–",
+                            None,
+                        ),
+                    ]
+                )
+
+            lthr = _setting_value(cycling_settings, "lthr")
+            hr_model = an.zone_model(cycling_settings, "hr")
+            power_model = an.zone_model(cycling_settings, "power")
+            with st.expander("Zonas de entrenamiento de referencia", expanded=False):
+                zone_hr_col, zone_power_col = st.columns(2)
+                with zone_hr_col:
+                    if hr_model:
+                        st.caption(
+                            f"FC con LTHR de {lthr:.0f} ppm y límites Friel "
+                            "85/90/95/100 %. Los minutos proceden de los contadores de "
+                            "zona de la fuente elegida; no se reclasifican sin datos "
+                            "segundo a segundo."
+                        )
+                        st.dataframe(
+                            pd.DataFrame(
+                                {
+                                    "Zona FC": [zone["label"] for zone in hr_model],
+                                    "Rango": [zone["range"] for zone in hr_model],
+                                }
+                            ),
+                            hide_index=True,
+                            width="stretch",
+                        )
+                    else:
+                        st.warning(
+                            "Sin LTHR configurado en intervals.icu: no se pueden "
+                            "calcular las 5 zonas de FC. Añade LTHR en los ajustes "
+                            "del deporte."
+                        )
+                with zone_power_col:
+                    if power_model:
+                        st.caption(
+                            f"Potencia Coggan con FTP de {ftp_for_zones:.0f} W. Se "
+                            "usan los bordes de potencia de intervals.icu cuando "
+                            "llegan como porcentaje de FTP; si no, los límites "
+                            "Coggan 55/75/90/105/120/150 %."
+                        )
+                        st.dataframe(
+                            pd.DataFrame(
+                                {
+                                    "Zona Coggan": [
+                                        zone["label"] for zone in power_model
+                                    ],
+                                    "Rango": [zone["range"] for zone in power_model],
+                                }
+                            ),
+                            hide_index=True,
+                            width="stretch",
+                        )
+                    else:
+                        st.warning(
+                            "Sin FTP configurado en intervals.icu: no se pueden "
+                            "calcular las 7 zonas de potencia."
+                        )
+
+
+            if cycling.empty:
+                st.info("No hay sesiones de ciclismo en el periodo seleccionado.")
+            else:
+                hr_zones = an.zone_minutes(hr_zone_source, "hr")
+                power_zones = an.zone_minutes(power_zone_source, "power")
+
+                left, right = st.columns(2)
+                with left:
+                    st.subheader("Zonas de frecuencia cardiaca · 5 zonas LTHR")
+                    st.caption(hr_source_label)
+                    if hr_zones["minutes"].sum() == 0:
+                        st.caption("Sin tiempos de zona de FC en las actividades.")
+                    else:
+                        st.plotly_chart(
+                            _zone_bar(hr_zones, "hr", cycling_settings), width="stretch"
+                        )
+                        hr_view = _zone_frame(hr_zones, cycling_settings, "hr")
+                        hr_view["minutos"] = hr_view["minutes"].round(0)
+                        hr_view["%"] = (hr_view["share"] * 100).round(1)
+                        with st.expander("Ver rangos y minutos exactos · FC", expanded=False):
+                            st.dataframe(
+                                hr_view[["label", "rango", "minutos", "%"]].rename(
+                                    columns={
+                                        "label": "Zona",
+                                        "rango": "Rango",
+                                        "minutos": "Minutos",
+                                    }
+                                ),
+                                hide_index=True,
+                                width="stretch",
+                            )
+
+                with right:
+                    st.subheader("Zonas de potencia · Coggan 7 zonas")
+                    st.caption(power_source_label)
+                    if power_zones["minutes"].sum() == 0:
+                        st.caption(
+                            "Sin zonas de potencia. Sincroniza intervals.icu para "
+                            "obtenerlas."
+                        )
+                    else:
+                        st.plotly_chart(
+                            _zone_bar(
+                                power_zones,
+                                "power",
+                                cycling_settings,
+                            ),
+                            width="stretch",
+                        )
+                        power_view = _zone_frame(
+                            power_zones,
+                            cycling_settings,
+                            "power",
+                        )
+                        power_view["minutos"] = power_view["minutes"].round(0)
+                        power_view["%"] = (power_view["share"] * 100).round(1)
+                        with st.expander("Ver rangos y minutos exactos · potencia", expanded=False):
+                            st.dataframe(
+                                power_view[["label", "rango", "minutos", "%"]].rename(
+                                    columns={
+                                        "label": "Zona",
+                                        "rango": "Rango",
+                                        "minutos": "Minutos",
+                                    }
+                                ),
+                                hide_index=True,
+                                width="stretch",
+                            )
 
 
     # ------------------------------ Actividades ------------------------------- #
 
-if tab_activities.open:
-    with tab_activities:
+if main_section == "Entrenamiento" and training_view == "Actividades":
+    with st.container():
         table = filtered.sort_values("start", ascending=False).copy()
         if table.empty:
             st.info("No hay actividades en el periodo y foco seleccionados.")
@@ -1743,7 +1744,7 @@ if tab_activities.open:
                     mime="text/csv",
                 )
     
-                st.subheader("Detalle de una actividad")
+                st.subheader("Ficha de la sesión seleccionada")
                 options = {
                     f"{row.Fecha} · {row.sport} · "
                     f"{row.activity_name if isinstance(row.activity_name, str) else 'Sin nombre'}": row.activity_id
@@ -1857,24 +1858,22 @@ if tab_activities.open:
                         watts = _stream_values(activity_streams, "watts")
                         speed_mps = _stream_values(activity_streams, "velocity_smooth")
 
-                        st.markdown("**Altitud y velocidad**")
+                        st.markdown("**Perfil de la sesión**")
                         if distance_m and altitude_m:
                             altitude_profile = streams.profile_frame(
                                 distance_m, altitude_m, "Distancia", "Altitud"
                             )
                             altitude_profile["Distancia"] /= 1000
                             stride = max(len(altitude_profile) // 3000, 1)
-                            fig = make_subplots(specs=[[{"secondary_y": True}]])
-                            fig.add_trace(
-                                go.Scatter(
-                                    x=altitude_profile["Distancia"].iloc[::stride],
-                                    y=altitude_profile["Altitud"].iloc[::stride],
-                                    mode="lines",
-                                    name="Altitud",
-                                    line={"color": P["tsb"], "width": 2.5},
-                                ),
-                                secondary_y=False,
+                            fig = px.line(
+                                altitude_profile.iloc[::stride],
+                                x="Distancia",
+                                y="Altitud",
+                                color_discrete_sequence=[P["elevation"]],
                             )
+                            fig.update_xaxes(title_text="Distancia (km)")
+                            fig.update_yaxes(title_text="Altitud (m)")
+                            st.plotly_chart(_style(fig, height=300), width="stretch")
                             if speed_mps:
                                 speed_profile = streams.profile_frame(
                                     distance_m, speed_mps, "Distancia", "Velocidad"
@@ -1882,21 +1881,16 @@ if tab_activities.open:
                                 speed_profile["Distancia"] /= 1000
                                 speed_profile["Velocidad"] *= 3.6
                                 speed_stride = max(len(speed_profile) // 3000, 1)
-                                fig.add_trace(
-                                    go.Scatter(
-                                        x=speed_profile["Distancia"].iloc[::speed_stride],
-                                        y=speed_profile["Velocidad"].iloc[::speed_stride],
-                                        mode="lines",
-                                        name="Velocidad",
-                                        line={"color": "#7DD3FC", "width": 1.5},
-                                        opacity=0.72,
-                                    ),
-                                    secondary_y=True,
+                                st.markdown("**Velocidad por distancia**")
+                                speed_fig = px.line(
+                                    speed_profile.iloc[::speed_stride],
+                                    x="Distancia",
+                                    y="Velocidad",
+                                    color_discrete_sequence=[P["primary"]],
                                 )
-                            fig.update_xaxes(title_text="Distancia (km)")
-                            fig.update_yaxes(title_text="Altitud (m)", secondary_y=False)
-                            fig.update_yaxes(title_text="Velocidad (km/h)", secondary_y=True)
-                            st.plotly_chart(_style(fig, height=360), width="stretch")
+                                speed_fig.update_xaxes(title_text="Distancia (km)")
+                                speed_fig.update_yaxes(title_text="Velocidad (km/h)")
+                                st.plotly_chart(_style(speed_fig, height=300), width="stretch")
                         elif time_s and speed_mps:
                             speed_profile = streams.profile_frame(
                                 time_s, speed_mps, "Tiempo", "Velocidad"
@@ -1909,7 +1903,7 @@ if tab_activities.open:
                                 x="Tiempo",
                                 y="Velocidad",
                                 title="Altitud no disponible · velocidad durante la sesión",
-                                color_discrete_sequence=["#7DD3FC"],
+                                color_discrete_sequence=[P["primary"]],
                             )
                             fig.update_xaxes(title_text="Tiempo (min)")
                             fig.update_yaxes(title_text="Velocidad (km/h)")
@@ -1928,7 +1922,7 @@ if tab_activities.open:
                                 power_profile.iloc[::stride],
                                 x="Tiempo",
                                 y="Potencia",
-                                color_discrete_sequence=[P["ctl"]],
+                                color_discrete_sequence=[P["power_avg"]],
                             )
                             fig.update_xaxes(title_text="Tiempo (min)")
                             fig.update_yaxes(title_text="Potencia (W)")
@@ -1953,7 +1947,7 @@ if tab_activities.open:
                                     x="Duración",
                                     y="watts",
                                     markers=True,
-                                    color_discrete_sequence=[P["ctl"]],
+                                    color_discrete_sequence=[P["power_best"]],
                                 )
                                 curve_fig.update_yaxes(title_text="Mejor media (W)")
                                 curve_fig.update_xaxes(title_text="Duración")
@@ -2139,46 +2133,47 @@ if tab_activities.open:
                     ),
                     lthr=_setting_value(cycling_settings, "lthr"),
                 )
-                st.caption("Texto listo para copiar y compartir con otra IA:")
-                st.code(reports.report_text(report), language="text")
-                report_col1, report_col2, report_col3 = st.columns(3)
-                with report_col1:
-                    st.download_button(
-                        "Descargar resumen .txt",
-                        reports.report_text(report),
-                        file_name=reports.report_filename(report),
-                        mime="text/plain",
-                    )
-                with report_col2:
-                    st.download_button(
-                        "Descargar datos .json",
-                        reports.report_json(report),
-                        file_name=reports.report_filename(report, ".json"),
-                        mime="application/json",
-                    )
-                with report_col3:
-                    if intervals_activity_id and intervals.is_configured():
-                        fit_result = _fetch_activity_fit(intervals_activity_id)
-                        if fit_result["data"]:
-                            st.download_button(
-                                "Descargar actividad .fit",
-                                data=fit_result["data"],
-                                file_name=reports.report_filename(report, ".fit"),
-                                mime="application/vnd.ant.fit",
-                                help="FIT generado por intervals.icu; puedes adjuntarlo al chat de IA junto al resumen.",
-                            )
+                with st.expander("Compartir y exportar", expanded=False):
+                    st.caption("Texto listo para copiar y compartir con otra IA:")
+                    st.code(reports.report_text(report), language="text")
+                    report_col1, report_col2, report_col3 = st.columns(3)
+                    with report_col1:
+                        st.download_button(
+                            "Descargar resumen .txt",
+                            reports.report_text(report),
+                            file_name=reports.report_filename(report),
+                            mime="text/plain",
+                        )
+                    with report_col2:
+                        st.download_button(
+                            "Descargar datos .json",
+                            reports.report_json(report),
+                            file_name=reports.report_filename(report, ".json"),
+                            mime="application/json",
+                        )
+                    with report_col3:
+                        if intervals_activity_id and intervals.is_configured():
+                            fit_result = _fetch_activity_fit(intervals_activity_id)
+                            if fit_result["data"]:
+                                st.download_button(
+                                    "Descargar actividad .fit",
+                                    data=fit_result["data"],
+                                    file_name=reports.report_filename(report, ".fit"),
+                                    mime="application/vnd.ant.fit",
+                                    help="FIT generado por intervals.icu; puedes adjuntarlo al chat de IA junto al resumen.",
+                                )
+                            else:
+                                st.button(
+                                    "Actividad .fit no disponible",
+                                    disabled=True,
+                                    help=fit_result["error"] or "intervals.icu no devolvió el archivo FIT.",
+                                )
                         else:
                             st.button(
                                 "Actividad .fit no disponible",
                                 disabled=True,
-                                help=fit_result["error"] or "intervals.icu no devolvió el archivo FIT.",
+                                help="Se necesita una actividad enlazada en intervals.icu para descargar el FIT.",
                             )
-                    else:
-                        st.button(
-                            "Actividad .fit no disponible",
-                            disabled=True,
-                            help="Se necesita una actividad enlazada en intervals.icu para descargar el FIT.",
-                        )
                 if linked_plan is not None:
                     st.subheader("Planificado vs real")
                     st.caption(
@@ -2233,8 +2228,8 @@ if tab_activities.open:
 
     # -------------------------------- Salud ----------------------------------- #
 
-if tab_health.open:
-    with tab_health:
+if main_section == "Recuperación" and recovery_view == "Salud":
+    with st.container():
         health = filtered_wellness if not filtered_wellness.empty else filtered_daily
         if health.empty:
             st.info(
@@ -2242,6 +2237,11 @@ if tab_health.open:
                 "intervals.icu."
             )
         else:
+            st.caption(
+                "Fuente de salud: intervals.icu y Garmin cuando están disponibles; Garmin completa huecos."
+                if not filtered_intervals_wellness.empty
+                else "Fuente de salud: Garmin."
+            )
             latest_sleep = health.dropna(subset=["sleep_h"]).tail(1)
             health_bands = health_analysis.reference_bands(filtered_wellness)
             hrv_source = health
@@ -2397,44 +2397,102 @@ if tab_health.open:
 
             with right:
                 st.subheader("FC en reposo y HRV")
-                fig = go.Figure()
+                health_series = []
                 rhr_df = health.dropna(subset=["resting_hr"])
                 if not rhr_df.empty:
-                    fig.add_trace(
-                        go.Scatter(
-                            x=rhr_df["date"],
-                            y=rhr_df["resting_hr"],
-                            name="FC reposo (ppm)",
-                            mode="lines+markers",
-                            marker=dict(size=3),
-                            line=dict(color=P["resting_hr"], width=2),
-                        )
+                    health_series.append(
+                        ("FC reposo", rhr_df, "resting_hr", "ppm", P["resting_hr"])
                     )
                 if hrv_column in health.columns and health[hrv_column].notna().any():
-                    fig.add_trace(
-                        go.Scatter(
-                            x=health["date"],
-                            y=health[hrv_column],
-                            name="HRV (ms)",
-                            mode="lines",
-                            line=dict(color=an.SPORT_COLORS["Fuerza"], width=1.8),
-                            yaxis="y2",
+                    health_series.append(
+                        (
+                            "HRV",
+                            health.dropna(subset=[hrv_column]),
+                            hrv_column,
+                            "ms",
+                            P["hrv"],
                         )
                     )
-                    fig.update_layout(
-                        yaxis2=dict(
-                            overlaying="y",
-                            side="right",
-                            showgrid=False,
-                            title="ms",
-                        )
-                    )
-                if not fig.data:
+                if not health_series:
                     st.plotly_chart(
-                        _empty_fig("Sin datos de FC en reposo"), width="stretch"
+                        _empty_fig("Sin datos de FC en reposo o HRV"), width="stretch"
                     )
                 else:
-                    fig.update_xaxes(tickformat="%d %b %y")
+                    fig = make_subplots(
+                        rows=len(health_series),
+                        cols=1,
+                        shared_xaxes=True,
+                        vertical_spacing=0.12,
+                        subplot_titles=[series[0] for series in health_series],
+                    )
+                    reference_labels = []
+                    for row_index, (series_name, series_df, field, unit, color) in enumerate(
+                        health_series, start=1
+                    ):
+                        values = pd.to_numeric(series_df[field], errors="coerce").dropna()
+                        mean_value = float(values.mean())
+                        dates = series_df["date"]
+                        fig.add_trace(
+                            go.Scatter(
+                                x=dates,
+                                y=[mean_value + 5] * len(dates),
+                                mode="lines",
+                                line=dict(width=0),
+                                hoverinfo="skip",
+                                showlegend=False,
+                            ),
+                            row=row_index,
+                            col=1,
+                        )
+                        fig.add_trace(
+                            go.Scatter(
+                                x=dates,
+                                y=[mean_value - 5] * len(dates),
+                                mode="lines",
+                                line=dict(width=0),
+                                fill="tonexty",
+                                fillcolor="rgba(56, 189, 248, 0.24)",
+                                hoverinfo="skip",
+                                showlegend=False,
+                            ),
+                            row=row_index,
+                            col=1,
+                        )
+                        fig.add_trace(
+                            go.Scatter(
+                                x=dates,
+                                y=[mean_value] * len(dates),
+                                mode="lines",
+                                line=dict(color=color, width=1.8, dash="dash"),
+                                hoverinfo="skip",
+                                showlegend=False,
+                            ),
+                            row=row_index,
+                            col=1,
+                        )
+                        reference_labels.append(
+                            f"{series_name}: media {_fmt(mean_value, 1)} {unit} "
+                            f"(franja {_fmt(mean_value - 5, 1)}–{_fmt(mean_value + 5, 1)} {unit})"
+                        )
+                        fig.add_trace(
+                            go.Scatter(
+                                x=series_df["date"],
+                                y=series_df[field],
+                                mode="lines+markers",
+                                marker=dict(size=3),
+                                line=dict(color=color, width=2),
+                                showlegend=False,
+                            ),
+                            row=row_index,
+                            col=1,
+                        )
+                        fig.update_yaxes(title_text=unit, row=row_index, col=1)
+                    fig.update_xaxes(tickformat="%d %b %y", row=len(health_series), col=1)
+                    fig.update_annotations(font=dict(size=12, color=P["muted"]))
+                    st.caption(
+                        "Línea discontinua = media del periodo; franja sombreada = media ±5. "
+                        + " · ".join(reference_labels)
+                    )
                     st.plotly_chart(_style(fig), width="stretch")
 
             if wellness_available:
@@ -2479,7 +2537,7 @@ if tab_health.open:
                         x=battery["date"],
                         y=battery["body_battery_max"],
                         name="Máximo",
-                        line=dict(color=an.SPORT_COLORS["Ciclismo"], width=1.8),
+                        line=dict(color=P["battery_max"], width=1.8),
                     )
                 )
                 fig.add_trace(
@@ -2487,7 +2545,7 @@ if tab_health.open:
                         x=battery["date"],
                         y=battery["body_battery_min"],
                         name="Mínimo",
-                        line=dict(color=P["resting_hr"], width=1.8),
+                        line=dict(color=P["battery_min"], width=1.8),
                     )
                 )
                 fig.update_xaxes(tickformat="%d %b %y")
@@ -2496,8 +2554,8 @@ if tab_health.open:
 
     # ---------------------------- Planificación ------------------------------ #
 
-if tab_plan.open:
-    with tab_plan:
+if main_section == "Planificación":
+    with st.container():
         plan_path = Path(__file__).with_name("planning_bloque_1.json")
         st.subheader("Objetivo · Desafío Lagos de Covadonga · junio de 2027")
         _metric_row([
@@ -2751,8 +2809,28 @@ if tab_plan.open:
             )
             plan_summary["% completado"] = (plan_summary["realizadas"] / plan_summary["sesiones_previstas"] * 100).round(0)
             st.subheader("Seguimiento por semana")
-            st.dataframe(
-                plan_summary.rename(columns={"Semana": "Semana", "sesiones_previstas": "Sesiones previstas", "realizadas": "Realizadas", "% completado": "Completado (%)"}),
-                hide_index=True,
+            plan_summary["sesiones_texto"] = plan_summary.apply(
+                lambda row: f"{int(row['realizadas'])}/{int(row['sesiones_previstas'])} sesiones",
+                axis=1,
+            )
+            fig = px.bar(
+                plan_summary,
+                x="% completado",
+                y="Semana",
+                orientation="h",
+                text="sesiones_texto",
+                labels={"% completado": "Sesiones completadas (%)", "Semana": ""},
+                color_discrete_sequence=[P["ctl"]],
+            )
+            fig.update_traces(textposition="outside", cliponaxis=False)
+            fig.update_xaxes(
+                range=[0, 100],
+                tickmode="array",
+                tickvals=[25, 50, 75, 100],
+                ticktext=["25%", "50%", "75%", "100%"],
+            )
+            fig.update_yaxes(autorange="reversed")
+            st.plotly_chart(
+                _style(fig, height=max(280, 44 * len(plan_summary))),
                 width="stretch",
             )

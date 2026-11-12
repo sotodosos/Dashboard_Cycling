@@ -113,10 +113,18 @@ APP_PALETTE = {
     "primary": "#38BDF8",
     "ctl": "#34D399",
     "atl": "#FB7185",
-    "tsb": "#38BDF8",
-    "sleep": "#A78BFA",
+    "tsb": "#A78BFA",
+    "sleep": "#E879F9",
     "resting_hr": "#FBBF24",
     "load": "#94A3B8",
+    "power_avg": "#38BDF8",
+    "power_normalized": "#FB923C",
+    "power_best": "#C084FC",
+    "weekly_trend": "#E2E8F0",
+    "battery_min": "#38BDF8",
+    "battery_max": "#C084FC",
+    "hrv": "#C084FC",
+    "elevation": "#2DD4BF",
 }
 
 SPORT_COLORS = {
