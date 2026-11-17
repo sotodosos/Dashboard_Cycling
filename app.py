@@ -13,6 +13,7 @@ La primera vez (o cuando caduque la sesión) hay que ejecutar antes:
 from __future__ import annotations
 
 import json
+import math
 import re
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -891,6 +892,101 @@ if main_section == "Recuperación" and recovery_view == "Forma":
                 ("FTP utilizado", f"{_fmt(effective_ftp)} W" if effective_ftp else "–", "Se prioriza el FTP interior; si no existe, se usa el FTP general."),
             ]
         )
+
+        st.subheader("📈 Tu evolución deportiva")
+        period_days = max((end_date - start_date).days + 1, 1)
+        previous_end = start_date - timedelta(days=1)
+        previous_start = previous_end - timedelta(days=period_days - 1)
+        previous_activities = an.filter_activities(
+            activities, previous_start, previous_end
+        )
+        if not previous_activities.empty:
+            previous_activities = previous_activities[
+                _focus_mask(previous_activities, focus)
+            ].copy()
+        available_activity_start = (
+            pd.to_datetime(activities["date"], errors="coerce").min()
+            if not activities.empty and "date" in activities
+            else pd.NaT
+        )
+        previous_period_complete = (
+            pd.notna(available_activity_start)
+            and available_activity_start.date() <= previous_start
+        )
+        current_totals = an.kpis(filtered)
+        previous_totals = an.kpis(previous_activities)
+        current_week_start = start_date - timedelta(days=start_date.weekday())
+        current_week_end = end_date - timedelta(days=end_date.weekday())
+        previous_week_start = previous_start - timedelta(days=previous_start.weekday())
+        previous_week_end = previous_end - timedelta(days=previous_end.weekday())
+        current_weeks = max(
+            1, len(pd.date_range(current_week_start, current_week_end, freq="W-MON"))
+        )
+        previous_weeks = max(
+            1, len(pd.date_range(previous_week_start, previous_week_end, freq="W-MON"))
+        )
+
+        def _active_weeks(frame: pd.DataFrame) -> int:
+            if frame.empty or "start" not in frame:
+                return 0
+            starts = pd.to_datetime(frame["start"], errors="coerce").dropna()
+            return int(starts.dt.to_period("W-SUN").nunique())
+
+        current_active_weeks = _active_weeks(filtered)
+        previous_active_weeks = _active_weeks(previous_activities)
+        def _comparison(current: float, previous: float) -> str | None:
+            if not previous_period_complete:
+                return None
+            if previous == 0:
+                return "Nueva actividad" if current > 0 else "Sin cambio"
+            return f"{(current / previous - 1) * 100:+.0f}% vs. periodo anterior"
+
+        current_consistency = current_active_weeks / current_weeks * 100
+        previous_consistency = previous_active_weeks / previous_weeks * 100
+        consistency_delta = (
+            f"{current_consistency - previous_consistency:+.0f} pp vs. periodo anterior"
+            if previous_period_complete
+            else None
+        )
+        metric_columns = st.columns(4)
+        with metric_columns[0]:
+            st.metric(
+                "Tiempo entrenado",
+                f"{current_totals['duration_h']:.1f} h",
+                _comparison(current_totals["duration_h"], previous_totals["duration_h"]),
+                delta_color="off",
+            )
+        with metric_columns[1]:
+            st.metric(
+                "Carga acumulada",
+                _fmt(current_totals["load"], 0),
+                _comparison(current_totals["load"], previous_totals["load"]),
+                delta_color="off",
+            )
+        with metric_columns[2]:
+            st.metric(
+                "Sesiones",
+                str(current_totals["sessions"]),
+                _comparison(current_totals["sessions"], previous_totals["sessions"]),
+                delta_color="off",
+            )
+        with metric_columns[3]:
+            st.metric(
+                "Semanas activas",
+                f"{current_consistency:.0f}%",
+                consistency_delta,
+                delta_color="off",
+                help=f"{current_active_weeks} de {current_weeks} semanas con al menos una sesión.",
+            )
+        st.caption(
+            f"Periodo actual: {start_date:%d/%m/%Y}–{end_date:%d/%m/%Y}. "
+            + (
+                f"Comparado con {previous_start:%d/%m/%Y}–{previous_end:%d/%m/%Y}."
+                if previous_period_complete
+                else "Aún no hay historial suficiente para comparar un periodo completo."
+            )
+        )
+
         st.markdown(
             """**CTL (42 días)** resume la carga crónica y suele cambiar despacio. """
             "**ATL (7 días)** responde más rápido a la carga reciente. "
@@ -2566,7 +2662,7 @@ if main_section == "Planificación":
             ("Sesiones principales", "Martes · jueves · fin de semana", None),
             ("Objetivo de diciembre", "Hasta 100 km · 1.500 m+", "Condicionado a la progresión y recuperación"),
         ])
-        st.caption("Puedes editar las sesiones, fechas, objetivos y notas directamente en la tabla. Asocia cada fila con la salida registrada correspondiente y pulsa Guardar planificación.")
+        st.caption("Puedes editar las sesiones, fechas, objetivos y notas directamente en la tabla. Asocia cada fila con la salida registrada correspondiente y pulsa Guardar planificación. En Estado, verde azulado indica una sesión realizada, gris alterno el resto y rojo la salida objetivo de diciembre.")
         try:
             plan_items = json.loads(plan_path.read_text(encoding="utf-8"))
             if not isinstance(plan_items, list):
@@ -2594,10 +2690,176 @@ if main_section == "Planificación":
             str(activity_row["activity_id"]): activity_row
             for _, activity_row in activity_options_frame.iterrows()
         }
+
+        def _activity_for_plan_day(
+            planned_day: date,
+            linked_activity_id: str = "",
+        ) -> pd.Series | None:
+            actual = activity_by_id.get(linked_activity_id) if linked_activity_id else None
+            if actual is None and not plan_activities.empty:
+                candidates = plan_activities[
+                    plan_activities["start"].dt.date.isin(
+                        [planned_day, planned_day + timedelta(days=1)]
+                    )
+                    & plan_activities["is_cycling"]
+                ].copy()
+                if not candidates.empty:
+                    candidates["day_gap"] = candidates["start"].dt.date.map(
+                        lambda actual_day: abs((actual_day - planned_day).days)
+                    )
+                    actual = candidates.sort_values("day_gap").iloc[0]
+            return actual
+
+        season_start = date(end_date.year, 8, 1)
+        if season_start > end_date:
+            season_start = date(end_date.year - 1, 8, 1)
+        if not plan_activities.empty:
+            activity_starts = pd.to_datetime(plan_activities["start"], errors="coerce")
+            goal_activities = plan_activities[
+                plan_activities["is_cycling"]
+                & (activity_starts >= pd.Timestamp(season_start))
+                & (activity_starts < pd.Timestamp(end_date) + pd.Timedelta(days=1))
+            ].copy()
+        else:
+            goal_activities = plan_activities.copy()
+        st.subheader("🎯 Progreso hacia tus objetivos")
+        season_rides = goal_activities.assign(
+            _distance=pd.to_numeric(goal_activities.get("distance_km"), errors="coerce")
+        ).dropna(subset=["_distance"])
+        if season_rides.empty:
+            st.info(
+                f"No hay salidas de ciclismo con distancia registrada desde el "
+                f"{season_start:%d/%m/%Y}."
+            )
+        else:
+            best_ride = season_rides.loc[season_rides["_distance"].idxmax()]
+            best_distance = float(best_ride["_distance"])
+            best_elevation_value = pd.to_numeric(
+                pd.Series([best_ride.get("elevation_gain_m")]), errors="coerce"
+            ).iloc[0]
+            best_elevation = (
+                float(best_elevation_value) if pd.notna(best_elevation_value) else None
+            )
+            best_ride_date = pd.to_datetime(best_ride["start"], errors="coerce")
+            ride_name_value = best_ride.get("activity_name")
+            if not isinstance(ride_name_value, str) or not ride_name_value.strip():
+                ride_name_value = best_ride.get("sport")
+            ride_name = (
+                ride_name_value
+                if isinstance(ride_name_value, str) and ride_name_value.strip()
+                else "Salida"
+            )
+            st.caption(
+                f"🏆 Mejor salida desde el {season_start:%d/%m/%Y}: "
+                f"{best_ride_date:%d/%m/%Y} · {ride_name} · {best_distance:.1f} km"
+                + (f" · {best_elevation:.0f} m+" if best_elevation is not None else " · desnivel sin dato")
+            )
+            goal_specs = [
+                {"name": "Bloque", "distance": 100.0, "elevation": 1500.0, "color": P["ctl"]},
+                {"name": "Lagos", "distance": 111.0, "elevation": 2400.0, "color": P["tsb"]},
+            ]
+
+            def _goal_progress_figure(value: float, metric: str, unit: str) -> go.Figure:
+                fig = go.Figure()
+                max_progress = 0.0
+                precision = 1 if unit == "km" else 0
+                for goal in goal_specs:
+                    target = goal[metric]
+                    progress = value / target * 100
+                    max_progress = max(max_progress, progress)
+                    fig.add_trace(
+                        go.Bar(
+                            x=[progress],
+                            y=[f"{goal['name']} · {_fmt(target, 0)} {unit}"],
+                            orientation="h",
+                            marker_color=goal["color"],
+                            text=[f"{_fmt(value, precision)} {unit} · {progress:.0f}%"],
+                            textposition="outside",
+                            cliponaxis=False,
+                            customdata=[[value, target]],
+                            hovertemplate=(
+                                f"{goal['name']}<br>"
+                                f"%{{customdata[0]:.{precision}f}} / "
+                                f"%{{customdata[1]:.0f}} {unit} · %{{x:.0f}}%"
+                                "<extra></extra>"
+                            ),
+                            showlegend=False,
+                        )
+                    )
+                axis_max = max(150, math.ceil((max_progress + 35) / 25) * 25)
+                tick_values = list(range(0, axis_max + 1, 25))
+                fig.add_vline(
+                    x=100,
+                    line_color=P["text"],
+                    line_dash="dash",
+                    line_width=1.6,
+                )
+                fig.update_xaxes(
+                    range=[0, axis_max],
+                    tickmode="array",
+                    tickvals=tick_values,
+                    ticktext=[f"{tick}%" for tick in tick_values],
+                    title="Progreso respecto al objetivo",
+                )
+                fig.update_yaxes(autorange="reversed", title="")
+                fig.update_layout(showlegend=False, bargap=0.48)
+                return _style(fig, height=250)
+
+            distance_col, elevation_col = st.columns(2)
+            with distance_col:
+                st.markdown("**🚴 Distancia**")
+                st.plotly_chart(
+                    _goal_progress_figure(best_distance, "distance", "km"),
+                    width="stretch",
+                )
+            with elevation_col:
+                st.markdown("**⛰️ Desnivel**")
+                if best_elevation is not None:
+                    st.plotly_chart(
+                        _goal_progress_figure(best_elevation, "elevation", "m+"),
+                        width="stretch",
+                    )
+                else:
+                    st.plotly_chart(
+                        _empty_fig("Desnivel no disponible en esta salida", height=250),
+                        width="stretch",
+                    )
+            st.caption(
+                "Verde = objetivo del bloque; violeta = Lagos. "
+                "La línea discontinua señala el 100% del objetivo."
+            )
         editor_rows = []
+        december_goal_row_indices: set[int] = set()
         for item in plan_items:
             planned_date = pd.to_datetime(item.get("fecha"), errors="coerce")
+            goal_details = " ".join(
+                str(item.get(field, ""))
+                for field in ("sesion", "objetivo", "observaciones")
+            ).casefold()
+            is_december_goal = (
+                pd.notna(planned_date)
+                and planned_date.month == 12
+                and re.search(r"\b100\s*km\b", goal_details) is not None
+                and re.search(r"\b1[.]?500\s*m\b", goal_details) is not None
+            )
+            if is_december_goal:
+                december_goal_row_indices.add(len(editor_rows))
+            linked_activity_id = str(item.get("activity_link_id", "")).strip()
+            actual = (
+                _activity_for_plan_day(planned_date.date(), linked_activity_id)
+                if pd.notna(planned_date)
+                else None
+            )
+            if actual is not None:
+                editor_state = "Realizada"
+            elif pd.isna(planned_date):
+                editor_state = "Sin fecha"
+            elif planned_date.date() >= date.today():
+                editor_state = "Pendiente"
+            else:
+                editor_state = "Sin actividad enlazada"
             editor_rows.append({
+                "Estado": editor_state,
                 "Semana": item.get("semana", ""),
                 "Fecha": planned_date.date() if pd.notna(planned_date) else None,
                 "Sesión": item.get("sesion", ""),
@@ -2608,9 +2870,10 @@ if main_section == "Planificación":
                 "Potencia objetivo": item.get("potencia", ""),
                 "Pulso / esfuerzo": item.get("pulso", ""),
                 "Observaciones": item.get("observaciones", ""),
-                "Actividad asociada": activity_id_to_label.get(str(item.get("activity_link_id", "")), ""),
+                "Actividad asociada": activity_id_to_label.get(linked_activity_id, ""),
             })
         editor_columns = [
+            "Estado",
             "Semana",
             "Fecha",
             "Sesión",
@@ -2625,13 +2888,36 @@ if main_section == "Planificación":
         ]
         editor_frame = pd.DataFrame(editor_rows, columns=editor_columns)
         editor_frame["Fecha"] = pd.to_datetime(editor_frame["Fecha"], errors="coerce")
+
+        def _editor_status_style(row: pd.Series) -> list[str]:
+            if row.name in december_goal_row_indices:
+                background = "#7F1D1D"
+                foreground = "#FEE2E2"
+            elif row.get("Estado") == "Realizada":
+                background = "#17443E"
+                foreground = "#D1FAE5"
+            else:
+                background = "#293548" if row.name % 2 == 0 else "#1B2635"
+                foreground = P["text"]
+            style = f"background-color: {background}; color: {foreground};"
+            return [style] * len(row)
+
+        styled_editor_frame = editor_frame.style.apply(
+            _editor_status_style,
+            axis=1,
+        )
         edited_plan = st.data_editor(
-            editor_frame,
+            styled_editor_frame,
             hide_index=True,
             width="stretch",
             height=560,
             key="plan_editor",
+            disabled=["Estado"],
             column_config={
+                "Estado": st.column_config.TextColumn(
+                    width="small",
+                    help="Se calcula a partir de la actividad asociada o registrada en la fecha de la sesión.",
+                ),
                 "Fecha": st.column_config.DateColumn(format="DD/MM/YYYY"),
                 "Semana": st.column_config.TextColumn(width="small"),
                 "Sesión": st.column_config.TextColumn(width="medium"),
@@ -2735,15 +3021,7 @@ if main_section == "Planificación":
             planned_day = planned_date.date()
             selected_label = row.get("Actividad asociada") or ""
             linked_id = activity_labels.get(selected_label, "")
-            actual = activity_by_id.get(linked_id) if linked_id else None
-            if actual is None and not plan_activities.empty:
-                candidates = plan_activities[
-                    plan_activities["start"].dt.date.isin([planned_day, planned_day + timedelta(days=1)])
-                    & plan_activities["is_cycling"]
-                ].copy()
-                if not candidates.empty:
-                    candidates["day_gap"] = candidates["start"].dt.date.map(lambda actual_day: abs((actual_day - planned_day).days))
-                    actual = candidates.sort_values("day_gap").iloc[0]
+            actual = _activity_for_plan_day(planned_day, linked_id)
             if actual is not None:
                 state = "Realizada"
                 actual_distance = float(actual["distance_km"]) if pd.notna(actual["distance_km"]) else None
@@ -2791,8 +3069,29 @@ if main_section == "Planificación":
         else:
             state_filter = st.multiselect("Mostrar estado", ["Pendiente", "Realizada", "Sin actividad enlazada"], default=["Pendiente", "Realizada", "Sin actividad enlazada"], key="plan_status_filter")
             st.subheader("Plan y seguimiento de distancia y desnivel")
+            visible_plan = plan_view[
+                plan_view["Realización"].isin(state_filter)
+            ].reset_index(drop=True)
+
+            def _planning_row_style(row: pd.Series) -> list[str]:
+                if row.get("Realización") == "Realizada":
+                    background = "#17443E"
+                    foreground = "#D1FAE5"
+                else:
+                    background = "#293548" if row.name % 2 == 0 else "#1B2635"
+                    foreground = P["text"]
+                style = f"background-color: {background}; color: {foreground};"
+                return [style] * len(row)
+
+            styled_plan = visible_plan.style.apply(
+                _planning_row_style,
+                axis=1,
+            )
+            st.caption(
+                "Gris alterno: sesiones planificadas · verde azulado: actividad registrada y realizada."
+            )
             st.dataframe(
-                plan_view[plan_view["Realización"].isin(state_filter)],
+                styled_plan,
                 hide_index=True,
                 width="stretch",
                 height=420,
