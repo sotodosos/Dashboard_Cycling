@@ -591,7 +591,7 @@ def _run_startup_sync(conn) -> None:
                     f"No se pudo completar la sincronización intervals.icu: {exc}"
                 )
         else:
-            messages.append("intervals.icu sin sincronizar: falta INTERVALS_API_KEY.")
+            messages.append("intervals.icu sin sincronizar: configura su API key cifrada.")
     _mark_auto_sync(conn, " · ".join(messages))
     _load_frames.clear()
     st.session_state["startup_sync_messages"] = messages
@@ -663,6 +663,8 @@ has_intervals = not intervals_acts.empty or not intervals_wellness.empty
 # --------------------------------------------------------------------------- #
 
 st.sidebar.title("🚴 Ciclismo Dashboard")
+if config.SECURE_STORAGE_ERROR:
+    st.sidebar.error(config.SECURE_STORAGE_ERROR)
 for startup_message in st.session_state.get("startup_sync_messages", []):
     st.sidebar.caption(startup_message)
 st.sidebar.caption(
@@ -699,9 +701,9 @@ with st.sidebar.expander("Sincronizar", expanded=has_garmin is False):
     st.divider()
     st.write("intervals.icu")
     if intervals.is_configured():
-        st.caption("`INTERVALS_API_KEY` configurada")
+        st.caption("API key de intervals.icu configurada y cifrada")
     else:
-        st.caption("Añade `INTERVALS_API_KEY` al `.env`")
+        st.caption("Guarda la API key con `python main.py credentials-set`")
     intervals_days = st.number_input(
         "Días de intervals.icu",
         min_value=30,
@@ -802,7 +804,7 @@ if activities.empty and wellness.empty and daily.empty:
         "Todavía no hay datos.\n\n"
         "1. Crea un `.env` a partir de `.env.example`.\n"
         "2. Para Garmin: `python main.py login` y pulsa **Actividades Garmin**.\n"
-        "3. Para intervals.icu: añade `INTERVALS_API_KEY` y pulsa "
+        "3. Para intervals.icu: guarda la API key con `python main.py credentials-set` y pulsa "
         "**Aptitud, zonas y actividades**.\n\n"
         "También puedes probar con datos de ejemplo: "
         "`python scripts/seed_demo.py --force`."

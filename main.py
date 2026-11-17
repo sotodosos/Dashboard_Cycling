@@ -12,9 +12,15 @@ Uso habitual:
 from __future__ import annotations
 
 import argparse
+import getpass
+import re
 import sys
+from pathlib import Path
+
+from dotenv import dotenv_values
 
 from garmin_dashboard import auth, config, db, intervals, sync
+from garmin_dashboard.secure_storage import SecureStorageError, delete, load_json, save_json
 
 
 def _progress(done: int, total: int, message: str) -> None:
@@ -28,16 +34,80 @@ def _finish_progress() -> None:
 
 def cmd_login(_: argparse.Namespace) -> int:
     print("Conectando con Garmin Connect...")
+    if config.SECURE_STORAGE_ERROR:
+        print(config.SECURE_STORAGE_ERROR, file=sys.stderr)
+        return 1
     if not config.EMAIL or not config.PASSWORD:
         print(
-            "Aviso: no hay credenciales en el entorno. Se intentará usar la "
-            f"sesión guardada en {config.TOKENSTORE}.",
+            "Faltan credenciales cifradas. Ejecuta `python main.py credentials-migrate` "
+            "para migrarlas desde .env, o `python main.py credentials-set`.",
             file=sys.stderr,
         )
     api = auth.login(interactive=True)
     name = api.get_full_name()
     print(f"Login correcto: {name}")
-    print(f"Tokens guardados en: {config.TOKENSTORE}")
+    print(f"Sesión Garmin guardada cifrada en: {config.ENCRYPTED_TOKENSTORE}")
+    return 0
+
+
+def _read_secret_values() -> dict[str, str]:
+    existing = load_json(config.SECURE_CREDENTIALS) or {}
+    email = input("Email de Garmin" + (f" [{existing.get('garmin_email')}]" if existing.get("garmin_email") else "") + ": ").strip()
+    password = getpass.getpass("Contraseña de Garmin (vacío conserva la actual): ")
+    api_key = getpass.getpass("API key de intervals.icu (vacío conserva la actual): ")
+    return {
+        "garmin_email": email or existing.get("garmin_email", ""),
+        "garmin_password": password or existing.get("garmin_password", ""),
+        "intervals_api_key": api_key or existing.get("intervals_api_key", ""),
+    }
+
+
+def cmd_credentials_set(_: argparse.Namespace) -> int:
+    values = _read_secret_values()
+    if not values["garmin_email"] or not values["garmin_password"]:
+        print("Se requieren email y contraseña de Garmin.", file=sys.stderr)
+        return 1
+    save_json(config.SECURE_CREDENTIALS, values)
+    print("Credenciales guardadas cifradas con DPAPI para este usuario de Windows.")
+    return 0
+
+
+def cmd_credentials_migrate(_: argparse.Namespace) -> int:
+    env_path = config.BASE_DIR / ".env"
+    values = dotenv_values(env_path) if env_path.exists() else {}
+    credentials = load_json(config.SECURE_CREDENTIALS) or {}
+    for target, names in {
+        "garmin_email": ("GARMIN_EMAIL", "EMAIL"),
+        "garmin_password": ("GARMIN_PASSWORD", "PASSWORD"),
+        "intervals_api_key": ("INTERVALS_API_KEY",),
+    }.items():
+        found = next((values.get(name) for name in names if values.get(name)), None)
+        if found:
+            credentials[target] = found
+
+    if credentials:
+        save_json(config.SECURE_CREDENTIALS, credentials)
+    legacy_tokens = config.TOKENSTORE
+    if legacy_tokens.exists():
+        import json
+
+        save_json(config.ENCRYPTED_TOKENSTORE, json.loads(legacy_tokens.read_text(encoding="utf-8")))
+        delete(legacy_tokens)
+
+    if env_path.exists():
+        secret_names = {"GARMIN_EMAIL", "GARMIN_PASSWORD", "EMAIL", "PASSWORD", "INTERVALS_API_KEY"}
+        lines = env_path.read_text(encoding="utf-8").splitlines(keepends=True)
+        safe_lines = [
+            line for line in lines
+            if not (match := re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)\s*=", line))
+            or match.group(1) not in secret_names
+        ]
+        env_path.write_text("".join(safe_lines), encoding="utf-8")
+
+    if not credentials and not config.ENCRYPTED_TOKENSTORE.exists():
+        print("No se encontraron credenciales ni tokens que migrar.", file=sys.stderr)
+        return 1
+    print("Migración completada: secretos en DPAPI y entradas sensibles retiradas de .env.")
     return 0
 
 
@@ -153,6 +223,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("login", help="Inicia sesión y guarda los tokens").set_defaults(
         func=cmd_login
     )
+    sub.add_parser("credentials-set", help="Guarda credenciales cifradas con DPAPI").set_defaults(
+        func=cmd_credentials_set
+    )
+    sub.add_parser("credentials-migrate", help="Migra secretos existentes de .env y tokens").set_defaults(
+        func=cmd_credentials_migrate
+    )
 
     sync_parser = sub.add_parser(
         "sync", help="Descarga actividades (y opcionalmente salud)"
@@ -219,7 +295,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)
-    except (auth.AuthError, sync.SyncError, intervals.IntervalsError) as exc:
+    except (auth.AuthError, sync.SyncError, intervals.IntervalsError, SecureStorageError) as exc:
         _finish_progress()
         print(f"\nError: {exc}", file=sys.stderr)
         return 1

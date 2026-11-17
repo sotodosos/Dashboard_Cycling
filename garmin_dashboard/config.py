@@ -11,6 +11,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from .secure_storage import SecureStorageError, load_json
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Carga .env una sola vez; no sobreescribe variables ya definidas en el sistema.
@@ -25,15 +27,24 @@ def _path_from_env(name: str, default: Path) -> Path:
 DATA_DIR = _path_from_env("GARMIN_DATA_DIR", BASE_DIR / "data")
 DB_PATH = _path_from_env("GARMIN_DB_PATH", DATA_DIR / "garmin.db")
 TOKENSTORE = _path_from_env("GARMIN_TOKENSTORE", DATA_DIR / "tokens.json")
+ENCRYPTED_TOKENSTORE = DATA_DIR / "tokens.dpapi"
+SECURE_CREDENTIALS = DATA_DIR / "credentials.dpapi"
+try:
+    _credentials = load_json(SECURE_CREDENTIALS) or {}
+    SECURE_STORAGE_ERROR = None
+except SecureStorageError as exc:
+    _credentials = {}
+    SECURE_STORAGE_ERROR = str(exc)
 
-EMAIL = os.getenv("GARMIN_EMAIL") or os.getenv("EMAIL")
-PASSWORD = os.getenv("GARMIN_PASSWORD") or os.getenv("PASSWORD")
+# Secretos solo desde el archivo protegido por DPAPI; nunca desde .env.
+EMAIL = _credentials.get("garmin_email")
+PASSWORD = _credentials.get("garmin_password")
 
 # Zona horaria usada solo para mostrar/etiquetar datos, no para las consultas.
 TIMEZONE = os.getenv("GARMIN_TIMEZONE", "Europe/Madrid")
 
 # intervals.icu
-INTERVALS_API_KEY = os.getenv("INTERVALS_API_KEY")
+INTERVALS_API_KEY = _credentials.get("intervals_api_key")
 INTERVALS_ATHLETE_ID = os.getenv("INTERVALS_ATHLETE_ID", "0")
 
 
