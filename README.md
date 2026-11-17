@@ -26,11 +26,14 @@ python -m venv venv
 .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 Copy-Item .env.example .env
+python main.py credentials-set
 ```
 
-Rellena `.env` con las credenciales que vayas a usar. Garmin se configura con
-`GARMIN_EMAIL` y `GARMIN_PASSWORD`; intervals.icu es opcional y se configura
-con `INTERVALS_API_KEY` y, si procede, `INTERVALS_ATHLETE_ID`.
+`credentials-set` solicita de forma interactiva el email y la contraseña de
+Garmin, y opcionalmente la API key de intervals.icu. Los guarda cifrados con
+Windows DPAPI, ligados al usuario de Windows que ejecuta el dashboard. Para
+migrar las credenciales y los tokens antiguos desde `.env` y `data/tokens.json`,
+ejecuta una vez `python main.py credentials-migrate`.
 
 Para sincronizar y abrir el dashboard:
 
@@ -48,7 +51,8 @@ ejecutar `bash iniciar_dashboard.sh` desde Git Bash. La dirección local es
 
 ## Datos y privacidad
 
-El proyecto está pensado para ejecutarse localmente. `.gitignore` excluye
+El proyecto está pensado para ejecutarse localmente. Las credenciales y los
+tokens se almacenan cifrados mediante Windows DPAPI. `.gitignore` excluye
 `.env`, tokens, la carpeta `data/` (incluidas las bases SQLite), las
 exportaciones de `artifacts/` y el plan personal `planning_bloque_1.json`.
 `.env.example` sí forma parte del repositorio y solo contiene valores de

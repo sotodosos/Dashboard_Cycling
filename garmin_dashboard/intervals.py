@@ -46,8 +46,8 @@ class IntervalsClient:
         self.timeout = timeout
         if not self.api_key:
             raise IntervalsError(
-                "Falta INTERVALS_API_KEY. Añádela a tu `.env` (la tienes en "
-                "intervals.icu → Settings → Developer Settings)."
+                "Falta la API key cifrada de intervals.icu. Ejecuta "
+                "`python main.py credentials-set` para configurarla."
             )
 
     # ------------------------------------------------------------------ #
