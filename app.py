@@ -39,6 +39,7 @@ from garmin_dashboard import (
     sync,
     ui,
 )
+from garmin_dashboard import visual_lab
 
 st.set_page_config(
     page_title="Ciclismo Dashboard",
@@ -85,6 +86,73 @@ _form_status = ui.form_status
 _wellness_figure = ui.wellness_figure
 _stream_values = streams.stream_values
 _plan_comparison_rows = planning.comparison_rows
+
+
+def _material_icon_svg(name: str, color: str | None = None) -> str:
+    """SVG outlined inline; avoids depending on a separately cached UI module or font download."""
+    paths = {
+        "directions_bike": '<circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/><path d="M15 6h2l3 11.5M5.5 17.5 10 9l4 8.5h-8l5-8h4"/>',
+        "trending_up": '<path d="m3 17 6-6 4 4 8-9M15 6h6v6"/>',
+        "flag": '<path d="M5 21V5m0 0c5-4 9 4 14 0v11c-5 4-9-4-14 0"/>',
+        "distance": '<path d="M4 7h16v10H4zM8 7v4m4-4v2m4-2v4m-8 3v3m4-3v2m4-2v3"/>',
+        "terrain": '<path d="m3 19 6-11 4 7 3-5 5 9H3Z"/><path d="m7 12 2 2 2-2"/>',
+    }
+    if name not in paths:
+        raise ValueError(f"Icono outlined no soportado: {name}")
+    stroke = color or P["primary"]
+    return (
+        f'<svg aria-hidden="true" viewBox="0 0 24 24" width="1.2em" height="1.2em" '
+        f'style="vertical-align:-0.22em;margin-right:.22em" fill="none" stroke="{stroke}" '
+        f'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">{paths[name]}</svg>'
+    )
+
+
+def _approved_chart(
+    key: str,
+    library: str,
+    *,
+    selected_activity: pd.Series | None = None,
+    load_activity_streams: bool = False,
+    activities_override: pd.DataFrame | None = None,
+    display_type: str | None = None,
+    height: int = 390,
+) -> None:
+    """Renderiza una decisión visual aprobada usando el catálogo compartido."""
+    specs = visual_lab.build_catalog({
+        "all_activities": activities,
+        "filtered_activities": activities_override if activities_override is not None else filtered,
+        "garmin": garmin,
+        "intervals_activities": intervals_acts,
+        "wellness": filtered_wellness,
+        "intervals_wellness": filtered_intervals_wellness,
+        "daily": filtered_daily,
+        "settings": cycling_settings,
+        "source_choice": source_choice,
+        "start_date": start_date,
+        "end_date": end_date,
+        "focus": focus,
+        "focus_mask": _focus_mask,
+        "plan_path": Path(__file__).with_name("planning_bloque_1.json"),
+        "plan_activities": _combined_activities(garmin, intervals_acts),
+        "selected_activity": selected_activity,
+        "load_activity_streams": load_activity_streams,
+        "intervals_configured": intervals.is_configured(),
+        "streams_fetcher": _fetch_activity_streams,
+    })
+    spec = next((item for item in specs if item["key"] == key), None)
+    if spec is None:
+        st.error(f"No se encontró la definición del gráfico {key}.")
+        return
+    spec = dict(spec)
+    if display_type:
+        spec["display_type"] = display_type
+    if key == "actividad_curva_potencia" and library == "Apache ECharts":
+        curve_data = spec["data"].copy()
+        curve_data["duration_min"] = (pd.to_numeric(curve_data["duration_s"], errors="coerce") / 60).round(2)
+        spec["data"] = curve_data
+        spec["x"] = "duration_min"
+        spec["x_label"] = "Duración (min)"
+    visual_lab.render_approved_chart(spec, library, height=height)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -663,7 +731,7 @@ has_intervals = not intervals_acts.empty or not intervals_wellness.empty
 # Barra lateral
 # --------------------------------------------------------------------------- #
 
-st.sidebar.title("🚴 Ciclismo Dashboard")
+st.sidebar.markdown(f'<h2>{_material_icon_svg("directions_bike")}Ciclismo Dashboard</h2>', unsafe_allow_html=True)
 if config.SECURE_STORAGE_ERROR:
     st.sidebar.error(config.SECURE_STORAGE_ERROR)
 for startup_message in st.session_state.get("startup_sync_messages", []):
@@ -789,7 +857,7 @@ wellness_available = not filtered_wellness.empty
 # Cabecera
 # --------------------------------------------------------------------------- #
 
-st.title("🚴 Panel de ciclismo")
+st.markdown(f'<h1>{_material_icon_svg("directions_bike")}Panel de ciclismo</h1>', unsafe_allow_html=True)
 source_label = {
     "Ambas fuentes": "Garmin + intervals.icu",
     "Solo Garmin": "Garmin",
@@ -846,7 +914,6 @@ elif main_section == "Recuperación":
         width="stretch",
     )
 
-
 if main_section == "Recuperación" and recovery_view == "Forma":
     with st.container():
         recovery_source = (
@@ -893,7 +960,7 @@ if main_section == "Recuperación" and recovery_view == "Forma":
             ]
         )
 
-        st.subheader("📈 Tu evolución deportiva")
+        st.markdown(f'<h3>{_material_icon_svg("trending_up")}Tu evolución deportiva</h3>', unsafe_allow_html=True)
         period_days = max((end_date - start_date).days + 1, 1)
         previous_end = start_date - timedelta(days=1)
         previous_start = previous_end - timedelta(days=period_days - 1)
@@ -1133,7 +1200,7 @@ if main_section == "Recuperación" and recovery_view == "Forma":
                         "no incorpora entrenamientos futuros."
                     )
                 fig.update_annotations(font=dict(size=12, color=P["muted"]))
-                st.plotly_chart(_style(fig, height=500), width="stretch")
+                _approved_chart("forma_evolucion", "Apache ECharts", height=500)
 
                 forecast_rows = []
                 latest_ctl_row = form.dropna(subset=["ctl", "atl"]).iloc[-1]
@@ -1235,7 +1302,7 @@ if main_section == "Recuperación" and recovery_view == "Forma":
                         )
                         fig.update_traces(line_color=P["tsb"], fillcolor="rgba(167,139,250,0.18)")
                         fig.update_xaxes(tickformat="%d %b %y")
-                        st.plotly_chart(_style(fig), width="stretch")
+                        _approved_chart("forma_ramp_rate", "Apache ECharts")
 
                 st.subheader("Últimos 30 días")
                 recent = form.sort_values("date", ascending=False).head(30).copy()
@@ -1388,7 +1455,7 @@ if main_section == "Entrenamiento" and training_view == "Ciclismo":
                 )
                 fig.update_yaxes(title_text="Mejor potencia media (W)")
                 fig.update_layout(legend={"orientation": "h", "y": 1.12})
-                st.plotly_chart(_style(fig, height=340), width="stretch")
+                _approved_chart("ciclismo_curva_potencia", "Apache ECharts", height=340)
             else:
                 st.info("No hay registros de mejor potencia por duración en el histórico. Garmin solo permite comparar esta curva si esos valores están incluidos en el resumen de actividad.")
 
@@ -1479,7 +1546,7 @@ if main_section == "Entrenamiento" and training_view == "Ciclismo":
                         },
                         hover_data=["activity_name"],
                     )
-                    st.plotly_chart(_style(fig), width="stretch")
+                    _approved_chart("ciclismo_velocidad_fc", "Altair / Vega-Lite")
 
             st.subheader("Reparto por deporte y rodillo vs exterior")
             cycling["tipo"] = cycling["indoor"].map({True: "Rodillo", False: "Exterior"})
@@ -1513,7 +1580,7 @@ if main_section == "Entrenamiento" and training_view == "Ciclismo":
                     )
                     fig.update_layout(showlegend=False)
                     fig.update_yaxes(autorange="reversed")
-                    st.plotly_chart(_style(fig), width="stretch")
+                    _approved_chart("ciclismo_reparto_deporte", "Apache ECharts", display_type="Tarta")
             with split_col:
                 st.markdown("**Horas de rodillo y exterior**")
                 fig = px.bar(
@@ -1530,7 +1597,7 @@ if main_section == "Entrenamiento" and training_view == "Ciclismo":
                 )
                 fig.update_traces(texttemplate="%{text:.1f} h", textposition="outside")
                 fig.update_layout(showlegend=False)
-                st.plotly_chart(_style(fig), width="stretch")
+                _approved_chart("ciclismo_rodillo_exterior", "Apache ECharts", display_type="Tarta")
             st.dataframe(
                 compare.rename(
                     columns={
@@ -1689,9 +1756,7 @@ if main_section == "Entrenamiento" and training_view == "Ciclismo":
                     if hr_zones["minutes"].sum() == 0:
                         st.caption("Sin tiempos de zona de FC en las actividades.")
                     else:
-                        st.plotly_chart(
-                            _zone_bar(hr_zones, "hr", cycling_settings), width="stretch"
-                        )
+                        _approved_chart("ciclismo_zonas_hr", "Altair / Vega-Lite", display_type="Barras", height=340)
                         hr_view = _zone_frame(hr_zones, cycling_settings, "hr")
                         hr_view["minutos"] = hr_view["minutes"].round(0)
                         hr_view["%"] = (hr_view["share"] * 100).round(1)
@@ -1717,14 +1782,7 @@ if main_section == "Entrenamiento" and training_view == "Ciclismo":
                             "obtenerlas."
                         )
                     else:
-                        st.plotly_chart(
-                            _zone_bar(
-                                power_zones,
-                                "power",
-                                cycling_settings,
-                            ),
-                            width="stretch",
-                        )
+                        _approved_chart("ciclismo_zonas_power", "Altair / Vega-Lite", display_type="Barras", height=340)
                         power_view = _zone_frame(
                             power_zones,
                             cycling_settings,
@@ -1850,6 +1908,14 @@ if main_section == "Entrenamiento" and training_view == "Actividades":
                 }
                 selected_label = st.selectbox("Actividad", list(options), key="detail_activity")
                 selected = table[table["activity_id"] == options[selected_label]].iloc[0]
+                st.subheader("Evolución de las actividades")
+                summary_left, summary_right = st.columns(2)
+                with summary_left:
+                    _approved_chart("actividad_contexto", "Altair / Vega-Lite", selected_activity=selected, activities_override=table)
+                    _approved_chart("actividad_potencia_resumen", "Altair / Vega-Lite", selected_activity=selected, activities_override=table)
+                with summary_right:
+                    _approved_chart("actividad_velocidad_resumen", "Altair / Vega-Lite", selected_activity=selected, activities_override=table)
+                    _approved_chart("actividad_desnivel_resumen", "Altair / Vega-Lite", selected_activity=selected, activities_override=table)
                 matched_garmin = None
                 if not garmin.empty and pd.notna(selected.get("start")):
                     candidates = garmin[garmin["is_cycling"]].copy()
@@ -1971,7 +2037,7 @@ if main_section == "Entrenamiento" and training_view == "Actividades":
                             )
                             fig.update_xaxes(title_text="Distancia (km)")
                             fig.update_yaxes(title_text="Altitud (m)")
-                            st.plotly_chart(_style(fig, height=300), width="stretch")
+                            _approved_chart("actividad_perfil_altitud", "Apache ECharts", selected_activity=selected, activities_override=table, load_activity_streams=True, height=300)
                             if speed_mps:
                                 speed_profile = streams.profile_frame(
                                     distance_m, speed_mps, "Distancia", "Velocidad"
@@ -1988,7 +2054,7 @@ if main_section == "Entrenamiento" and training_view == "Actividades":
                                 )
                                 speed_fig.update_xaxes(title_text="Distancia (km)")
                                 speed_fig.update_yaxes(title_text="Velocidad (km/h)")
-                                st.plotly_chart(_style(speed_fig, height=300), width="stretch")
+                                _approved_chart("actividad_velocidad", "Apache ECharts", selected_activity=selected, activities_override=table, load_activity_streams=True, height=300)
                         elif time_s and speed_mps:
                             speed_profile = streams.profile_frame(
                                 time_s, speed_mps, "Tiempo", "Velocidad"
@@ -2005,7 +2071,7 @@ if main_section == "Entrenamiento" and training_view == "Actividades":
                             )
                             fig.update_xaxes(title_text="Tiempo (min)")
                             fig.update_yaxes(title_text="Velocidad (km/h)")
-                            st.plotly_chart(_style(fig, height=340), width="stretch")
+                            _approved_chart("actividad_velocidad", "Apache ECharts", selected_activity=selected, activities_override=table, load_activity_streams=True, height=340)
                         else:
                             st.caption("No hay muestras suficientes para dibujar el perfil de altitud y velocidad.")
 
@@ -2024,7 +2090,7 @@ if main_section == "Entrenamiento" and training_view == "Actividades":
                             )
                             fig.update_xaxes(title_text="Tiempo (min)")
                             fig.update_yaxes(title_text="Potencia (W)")
-                            st.plotly_chart(_style(fig, height=340), width="stretch")
+                            _approved_chart("actividad_potencia_tiempo", "Apache ECharts", selected_activity=selected, activities_override=table, load_activity_streams=True, height=340)
                             st.markdown("**Curva de potencia de la sesión**")
                             st.caption(
                                 "Muestra la mejor potencia media que se sostuvo para "
@@ -2049,7 +2115,7 @@ if main_section == "Entrenamiento" and training_view == "Actividades":
                                 )
                                 curve_fig.update_yaxes(title_text="Mejor media (W)")
                                 curve_fig.update_xaxes(title_text="Duración")
-                                st.plotly_chart(_style(curve_fig, height=300), width="stretch")
+                                _approved_chart("actividad_curva_potencia", "Apache ECharts", selected_activity=selected, activities_override=table, load_activity_streams=True, height=300)
                         else:
                             st.caption("Esta sesión no contiene muestras de potencia.")
                     else:
@@ -2132,6 +2198,13 @@ if main_section == "Entrenamiento" and training_view == "Actividades":
                     else pd.DataFrame(columns=["zone", "label", "minutes"])
                 )
                 activity_power_zones = an.activity_zone_minutes(selected, "power")
+                zone_left, zone_right = st.columns(2)
+                with zone_left:
+                    st.markdown("**Zonas FC de la actividad**")
+                    _approved_chart("actividad_zonas_hr", "Apache ECharts", selected_activity=selected, activities_override=table, display_type="Dona")
+                with zone_right:
+                    st.markdown("**Zonas de potencia de la actividad**")
+                    _approved_chart("actividad_zonas_power", "Apache ECharts", selected_activity=selected, activities_override=table, display_type="Dona")
                 activity_hr_zones = _zone_frame(activity_hr_zones, cycling_settings, "hr")
                 activity_power_zones = _zone_frame(
                     activity_power_zones,
@@ -2283,45 +2356,6 @@ if main_section == "Entrenamiento" and training_view == "Actividades":
                         hide_index=True,
                         width="stretch",
                     )
-                st.subheader("Tiempo en zonas de la sesión")
-                zone_chart_specs = (
-                    ("Frecuencia cardiaca", activity_hr_zones, an.HR_ZONE_COLORS),
-                    ("Potencia", activity_power_zones, an.POWER_ZONE_COLORS),
-                )
-                for title, zone_data, palette in zone_chart_specs:
-                    st.markdown(f"**{title}**")
-                    available = zone_data[zone_data["minutes"] > 0].copy()
-                    if available.empty:
-                        st.caption(f"No hay tiempos de {title.lower()} disponibles para esta sesión.")
-                        continue
-                    available["tiempo"] = available["minutes"].apply(an.format_duration)
-                    fig = go.Figure(
-                        go.Bar(
-                            x=available["minutes"],
-                            y=available["label"],
-                            orientation="h",
-                            text=available["tiempo"],
-                            textposition="outside",
-                            cliponaxis=False,
-                            marker_color=[
-                                palette[int(str(zone).removeprefix("Z")) - 1]
-                                if str(zone).startswith("Z")
-                                and str(zone).removeprefix("Z").isdigit()
-                                and int(str(zone).removeprefix("Z")) <= len(palette)
-                                else palette[0]
-                                for zone in available["zone"]
-                            ],
-                            hovertemplate="%{y}<br>%{text}<extra></extra>",
-                        )
-                    )
-                    fig.update_layout(
-                        height=max(210, 42 * len(available)),
-                        showlegend=False,
-                        margin={"l": 12, "r": 90, "t": 16, "b": 38},
-                    )
-                    fig.update_xaxes(title_text="Minutos", rangemode="tozero")
-                    fig.update_yaxes(title_text="", autorange="reversed")
-                    st.plotly_chart(_style(fig, height=max(210, 42 * len(available))), width="stretch")
     
 
     # -------------------------------- Salud ----------------------------------- #
@@ -2491,7 +2525,7 @@ if main_section == "Recuperación" and recovery_view == "Salud":
                     )
                     fig.update_xaxes(tickformat="%d %b %y")
                     fig.update_yaxes(title="horas")
-                    st.plotly_chart(_style(fig), width="stretch")
+                    _approved_chart("salud_sueno", "Apache ECharts")
 
             with right:
                 st.subheader("FC en reposo y HRV")
@@ -2591,7 +2625,7 @@ if main_section == "Recuperación" and recovery_view == "Salud":
                         "Línea discontinua = media del periodo; franja sombreada = media ±5. "
                         + " · ".join(reference_labels)
                     )
-                    st.plotly_chart(_style(fig), width="stretch")
+                    _approved_chart("salud_fc_hrv", "Apache ECharts", height=440)
 
             if wellness_available:
                 st.subheader("Sueño, HRV y peso")
@@ -2647,7 +2681,7 @@ if main_section == "Recuperación" and recovery_view == "Salud":
                     )
                 )
                 fig.update_xaxes(tickformat="%d %b %y")
-                st.plotly_chart(_style(fig, height=300), width="stretch")
+                _approved_chart("salud_body_battery", "Altair / Vega-Lite", height=300)
 
 
     # ---------------------------- Planificación ------------------------------ #
@@ -2662,7 +2696,7 @@ if main_section == "Planificación":
             ("Sesiones principales", "Martes · jueves · fin de semana", None),
             ("Objetivo de diciembre", "Hasta 100 km · 1.500 m+", "Condicionado a la progresión y recuperación"),
         ])
-        st.caption("Puedes editar las sesiones, fechas, objetivos y notas directamente en la tabla. Asocia cada fila con la salida registrada correspondiente y pulsa Guardar planificación. En Estado, verde azulado indica una sesión realizada, gris alterno el resto y rojo la salida objetivo de diciembre.")
+        st.caption("Puedes editar las sesiones, los objetivos de distancia y desnivel, y las notas directamente en la tabla. La fecha queda fija y de solo lectura; se colorea en verde azulado para una sesión realizada, en gris alterno para el resto y en rojo para la salida objetivo de diciembre. Asocia las sesiones con sus actividades y pulsa Guardar planificación.")
         try:
             plan_items = json.loads(plan_path.read_text(encoding="utf-8"))
             if not isinstance(plan_items, list):
@@ -2722,7 +2756,7 @@ if main_section == "Planificación":
             ].copy()
         else:
             goal_activities = plan_activities.copy()
-        st.subheader("🎯 Progreso hacia tus objetivos")
+        st.markdown(f'<h3>{_material_icon_svg("flag")}Progreso hacia tus objetivos</h3>', unsafe_allow_html=True)
         season_rides = goal_activities.assign(
             _distance=pd.to_numeric(goal_activities.get("distance_km"), errors="coerce")
         ).dropna(subset=["_distance"])
@@ -2750,7 +2784,7 @@ if main_section == "Planificación":
                 else "Salida"
             )
             st.caption(
-                f"🏆 Mejor salida desde el {season_start:%d/%m/%Y}: "
+                f"Mejor salida desde el {season_start:%d/%m/%Y}: "
                 f"{best_ride_date:%d/%m/%Y} · {ride_name} · {best_distance:.1f} km"
                 + (f" · {best_elevation:.0f} m+" if best_elevation is not None else " · desnivel sin dato")
             )
@@ -2760,60 +2794,49 @@ if main_section == "Planificación":
             ]
 
             def _goal_progress_figure(value: float, metric: str, unit: str) -> go.Figure:
-                fig = go.Figure()
-                max_progress = 0.0
+                fig = make_subplots(rows=1, cols=2, specs=[[{"type": "domain"}, {"type": "domain"}]])
                 precision = 1 if unit == "km" else 0
-                for goal in goal_specs:
+                for index, goal in enumerate(goal_specs, start=1):
                     target = goal[metric]
+                    achieved = min(max(value, 0.0), target)
+                    pending = max(target - value, 0.0)
                     progress = value / target * 100
-                    max_progress = max(max_progress, progress)
-                    fig.add_trace(
-                        go.Bar(
-                            x=[progress],
-                            y=[f"{goal['name']} · {_fmt(target, 0)} {unit}"],
-                            orientation="h",
-                            marker_color=goal["color"],
-                            text=[f"{_fmt(value, precision)} {unit} · {progress:.0f}%"],
-                            textposition="outside",
-                            cliponaxis=False,
-                            customdata=[[value, target]],
-                            hovertemplate=(
-                                f"{goal['name']}<br>"
-                                f"%{{customdata[0]:.{precision}f}} / "
-                                f"%{{customdata[1]:.0f}} {unit} · %{{x:.0f}}%"
-                                "<extra></extra>"
-                            ),
-                            showlegend=False,
-                        )
+                    fig.add_trace(go.Pie(
+                        labels=["Conseguido", "No conseguido"],
+                        values=[achieved, pending],
+                        name=goal["name"],
+                        hole=.68,
+                        sort=False,
+                        textinfo="none",
+                        marker={"colors": [goal["color"], "#354355"]},
+                        showlegend=index == 1,
+                        hovertemplate=(
+                            f"{goal['name']} · {_fmt(target, precision)} {unit}<br>"
+                            "%{label}: %{value:.1f} " + unit + " (%{percent})<extra></extra>"
+                        ),
+                    ), row=1, col=index)
+                    fig.add_annotation(
+                        x=.25 if index == 1 else .75, y=.5, xref="paper", yref="paper",
+                        text=f"{progress:.0f}%<br><sup>{_fmt(value, precision)} / {_fmt(target, precision)} {unit}</sup>",
+                        showarrow=False, font={"size": 14, "color": P["text"]},
                     )
-                axis_max = max(150, math.ceil((max_progress + 35) / 25) * 25)
-                tick_values = list(range(0, axis_max + 1, 25))
-                fig.add_vline(
-                    x=100,
-                    line_color=P["text"],
-                    line_dash="dash",
-                    line_width=1.6,
+                fig.update_layout(
+                    height=270,
+                    margin={"l": 8, "r": 8, "t": 35, "b": 8},
+                    legend={"orientation": "h", "y": -0.08, "x": .2},
+                    annotations=[{"text": f"Bloque · {_fmt(goal_specs[0][metric], precision)} {unit}", "x": .25, "y": 1.08, "xref": "paper", "yref": "paper", "showarrow": False}, {"text": f"Lagos · {_fmt(goal_specs[1][metric], precision)} {unit}", "x": .75, "y": 1.08, "xref": "paper", "yref": "paper", "showarrow": False}, *fig.layout.annotations],
                 )
-                fig.update_xaxes(
-                    range=[0, axis_max],
-                    tickmode="array",
-                    tickvals=tick_values,
-                    ticktext=[f"{tick}%" for tick in tick_values],
-                    title="Progreso respecto al objetivo",
-                )
-                fig.update_yaxes(autorange="reversed", title="")
-                fig.update_layout(showlegend=False, bargap=0.48)
-                return _style(fig, height=250)
+                return _style(fig, height=290)
 
             distance_col, elevation_col = st.columns(2)
             with distance_col:
-                st.markdown("**🚴 Distancia**")
+                st.markdown(f'{_material_icon_svg("distance")}**Distancia**', unsafe_allow_html=True)
                 st.plotly_chart(
                     _goal_progress_figure(best_distance, "distance", "km"),
                     width="stretch",
                 )
             with elevation_col:
-                st.markdown("**⛰️ Desnivel**")
+                st.markdown(f'{_material_icon_svg("terrain")}**Desnivel**', unsafe_allow_html=True)
                 if best_elevation is not None:
                     st.plotly_chart(
                         _goal_progress_figure(best_elevation, "elevation", "m+"),
@@ -2825,11 +2848,69 @@ if main_section == "Planificación":
                         width="stretch",
                     )
             st.caption(
-                "Verde = objetivo del bloque; violeta = Lagos. "
-                "La línea discontinua señala el 100% del objetivo."
+                "Cada anillo compara lo conseguido con lo pendiente para el bloque y Lagos. "
+                "Al completar el objetivo, el anillo aparece lleno."
             )
+        def _has_plan_target(value: object) -> bool:
+            if value is None or pd.isna(value):
+                return False
+            return str(value).strip() not in {"", "–", "-", "nan", "None"}
+
+        def _plan_target_values(item: object) -> tuple[str, str]:
+            observations = str(
+                item.get("observaciones", item.get("Observaciones", "")) or ""
+            )
+            distance_target = item.get(
+                "distance_target_km",
+                item.get("Distancia objetivo (km)", ""),
+            )
+            elevation_target = item.get(
+                "elevation_target_m",
+                item.get("Desnivel objetivo (m+)", ""),
+            )
+            if not _has_plan_target(distance_target):
+                distance_range = re.search(
+                    r"(\d{2,3}(?:[.,]\d+)?)\s*[-–]\s*(\d{2,3}(?:[.,]\d+)?)\s*km",
+                    observations,
+                    flags=re.IGNORECASE,
+                )
+                distance_single = re.search(
+                    r"(\d{2,3}(?:[.,]\d+)?)\s*km",
+                    observations,
+                    flags=re.IGNORECASE,
+                )
+                if distance_range:
+                    distance_target = f"{distance_range.group(1)}–{distance_range.group(2)}"
+                elif distance_single:
+                    distance_target = distance_single.group(1)
+            if not _has_plan_target(elevation_target):
+                elevation_number = r"(?:\d{1,2}[.,]\d{3}|\d{3,4})"
+                elevation_range = re.search(
+                    rf"(?<![\d.,])({elevation_number})\s*m?\s*[-–]\s*({elevation_number})\s*m",
+                    observations,
+                    flags=re.IGNORECASE,
+                )
+                elevation_single = re.search(
+                    rf"(?<![\d.,])({elevation_number})\s*m\s*(?:positivos|\+)",
+                    observations,
+                    flags=re.IGNORECASE,
+                )
+                if elevation_range:
+                    elevation_target = f"{elevation_range.group(1)}–{elevation_range.group(2)}"
+                elif elevation_single:
+                    elevation_target = f"≤{elevation_single.group(1)}"
+            return (
+                str(distance_target).strip()
+                if _has_plan_target(distance_target)
+                else "–",
+                str(elevation_target).strip()
+                if _has_plan_target(elevation_target)
+                else "–",
+            )
+
         editor_rows = []
         december_goal_row_indices: set[int] = set()
+        completed_row_indices: set[int] = set()
         for item in plan_items:
             planned_date = pd.to_datetime(item.get("fecha"), errors="coerce")
             goal_details = " ".join(
@@ -2851,20 +2932,16 @@ if main_section == "Planificación":
                 else None
             )
             if actual is not None:
-                editor_state = "Realizada"
-            elif pd.isna(planned_date):
-                editor_state = "Sin fecha"
-            elif planned_date.date() >= date.today():
-                editor_state = "Pendiente"
-            else:
-                editor_state = "Sin actividad enlazada"
+                completed_row_indices.add(len(editor_rows))
+            distance_target, elevation_target = _plan_target_values(item)
             editor_rows.append({
-                "Estado": editor_state,
                 "Semana": item.get("semana", ""),
                 "Fecha": planned_date.date() if pd.notna(planned_date) else None,
                 "Sesión": item.get("sesion", ""),
                 "Modalidad": item.get("modalidad", ""),
                 "Duración": item.get("duracion", ""),
+                "Distancia objetivo (km)": distance_target,
+                "Desnivel objetivo (m+)": elevation_target,
                 "Estructura": item.get("estructura", ""),
                 "Objetivo": item.get("objetivo", ""),
                 "Potencia objetivo": item.get("potencia", ""),
@@ -2873,12 +2950,13 @@ if main_section == "Planificación":
                 "Actividad asociada": activity_id_to_label.get(linked_activity_id, ""),
             })
         editor_columns = [
-            "Estado",
             "Semana",
             "Fecha",
             "Sesión",
             "Modalidad",
             "Duración",
+            "Distancia objetivo (km)",
+            "Desnivel objetivo (m+)",
             "Estructura",
             "Objetivo",
             "Potencia objetivo",
@@ -2889,38 +2967,41 @@ if main_section == "Planificación":
         editor_frame = pd.DataFrame(editor_rows, columns=editor_columns)
         editor_frame["Fecha"] = pd.to_datetime(editor_frame["Fecha"], errors="coerce")
 
-        def _editor_status_style(row: pd.Series) -> list[str]:
+        def _editor_date_style(row: pd.Series) -> list[str]:
             if row.name in december_goal_row_indices:
                 background = "#7F1D1D"
                 foreground = "#FEE2E2"
-            elif row.get("Estado") == "Realizada":
+            elif row.name in completed_row_indices:
                 background = "#17443E"
                 foreground = "#D1FAE5"
             else:
                 background = "#293548" if row.name % 2 == 0 else "#1B2635"
                 foreground = P["text"]
             style = f"background-color: {background}; color: {foreground};"
-            return [style] * len(row)
+            return [style]
 
         styled_editor_frame = editor_frame.style.apply(
-            _editor_status_style,
+            _editor_date_style,
             axis=1,
+            subset=["Fecha"],
         )
         edited_plan = st.data_editor(
             styled_editor_frame,
             hide_index=True,
             width="stretch",
             height=560,
-            key="plan_editor",
-            disabled=["Estado"],
+            key="plan_editor_v2",
             column_config={
-                "Estado": st.column_config.TextColumn(
-                    width="small",
-                    help="Se calcula a partir de la actividad asociada o registrada en la fecha de la sesión.",
+                "Fecha": st.column_config.DateColumn(
+                    format="DD/MM/YYYY",
+                    pinned=True,
+                    disabled=True,
+                    help="Fecha fija para mantenerla visible y coloreada al desplazarte por la tabla.",
                 ),
-                "Fecha": st.column_config.DateColumn(format="DD/MM/YYYY"),
                 "Semana": st.column_config.TextColumn(width="small"),
                 "Sesión": st.column_config.TextColumn(width="medium"),
+                "Distancia objetivo (km)": st.column_config.TextColumn(width=110),
+                "Desnivel objetivo (m+)": st.column_config.TextColumn(width=110),
                 "Estructura": st.column_config.TextColumn(width="large"),
                 "Objetivo": st.column_config.TextColumn(width="large"),
                 "Observaciones": st.column_config.TextColumn(width="large"),
@@ -2937,7 +3018,9 @@ if main_section == "Planificación":
             invalid_rows = 0
             field_map = {
                 "Semana": "semana", "Sesión": "sesion", "Modalidad": "modalidad",
-                "Duración": "duracion", "Estructura": "estructura", "Objetivo": "objetivo",
+                "Duración": "duracion", "Distancia objetivo (km)": "distance_target_km",
+                "Desnivel objetivo (m+)": "elevation_target_m",
+                "Estructura": "estructura", "Objetivo": "objetivo",
                 "Potencia objetivo": "potencia", "Pulso / esfuerzo": "pulso",
                 "Observaciones": "observaciones",
             }
@@ -3033,18 +3116,15 @@ if main_section == "Planificación":
                 state = "Pendiente" if planned_day >= date.today() else "Sin actividad enlazada"
                 actual_distance = actual_elevation = None
                 actual_summary = actual_link = "–"
-            observations = str(row.get("Observaciones") or "")
-            elevation_match = re.search(r"(\d{3,4})\s*[-–]\s*(\d{3,4})\s*m", observations)
-            distance_match = re.search(r"(\d{2,3})\s*km", observations)
-            elevation_single = re.search(r"(\d{3,4})\s*m\s*(?:positivos|\+)", observations, flags=re.IGNORECASE)
+            distance_target, elevation_target = _plan_target_values(row)
             plan_rows.append({
                 "Semana": row["Semana"],
                 "Fecha": planned_day.strftime("%d/%m/%Y"),
                 "Sesión": row["Sesión"],
                 "Modalidad": row["Modalidad"],
                 "Duración prevista": row["Duración"],
-                "Distancia objetivo (km)": distance_match.group(1) if distance_match else "–",
-                "Desnivel objetivo (m+)": f"{elevation_match.group(1)}–{elevation_match.group(2)}" if elevation_match else (f"≤{elevation_single.group(1)}" if elevation_single else "–"),
+                "Distancia objetivo (km)": distance_target,
+                "Desnivel objetivo (m+)": elevation_target,
                 "Realización": state,
                 "Distancia realizada (km)": round(actual_distance, 1) if actual_distance is not None else None,
                 "Desnivel realizado (m+)": round(actual_elevation) if actual_elevation is not None else None,

@@ -16,15 +16,38 @@ CHART_HEIGHT = 360
 PALETTE = an.APP_PALETTE
 
 
+def material_icon_svg(name: str, color: str | None = None) -> str:
+    """Inline outline glyphs matching the selected Material Symbols vocabulary.
+
+    Inline SVG keeps the outlined iconography available when the browser cannot
+    reach Google Fonts on a local network.
+    """
+    paths = {
+        "directions_bike": '<circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/><path d="M15 6h2l3 11.5M5.5 17.5 10 9l4 8.5h-8l5-8h4"/>',
+        "trending_up": '<path d="m3 17 6-6 4 4 8-9M15 6h6v6"/>',
+        "flag": '<path d="M5 21V5m0 0c5-4 9 4 14 0v11c-5 4-9-4-14 0"/>',
+        "distance": '<path d="M4 7h16v10H4zM8 7v4m4-4v2m4-2v4m-8 3v3m4-3v2m4-2v3"/>',
+        "terrain": '<path d="m3 19 6-11 4 7 3-5 5 9H3Z"/><path d="m7 12 2 2 2-2"/>',
+    }
+    if name not in paths:
+        raise ValueError(f"Icono Material outlined no soportado: {name}")
+    stroke = color or PALETTE["primary"]
+    return (
+        f'<svg aria-hidden="true" viewBox="0 0 24 24" width="1.2em" height="1.2em" '
+        f'style="vertical-align:-0.22em;margin-right:.22em" fill="none" stroke="{stroke}" '
+        f'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">{paths[name]}</svg>'
+    )
+
+
 def apply_theme() -> None:
     """CSS del dashboard. Se llama una vez al principio de la app."""
     P = PALETTE
     st.markdown(
         f"""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&display=swap');
     html, body, [class*="css"], button, input, textarea, select {{
-        font-family: 'DM Sans', 'Segoe UI', sans-serif;
+        font-family: 'Manrope', 'Segoe UI', sans-serif;
     }}
     .stApp {{
         background: {P["background"]};
@@ -84,7 +107,7 @@ def apply_theme() -> None:
     }}
     h1, h2, h3 {{
         color: {P["text"]};
-        font-family: 'Space Grotesk', 'Segoe UI', sans-serif;
+        font-family: 'Manrope', 'Segoe UI', sans-serif;
         font-weight: 600;
     }}
     [data-testid="stCaptionContainer"], .stMarkdown small {{ color: {P["muted"]}; }}
