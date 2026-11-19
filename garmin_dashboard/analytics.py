@@ -103,28 +103,28 @@ INDOOR_TYPES = {
     "VirtualRide",
 }
 
-# Tema Carbón nocturno: neutros oscuros y series luminosas de alto contraste.
+# Dirección visual Rendimiento deportivo: neutros profundos y acentos diferenciados.
 APP_PALETTE = {
-    "background": "#111827",
-    "panel": "#1F2937",
-    "border": "#38465A",
-    "text": "#F1F5F9",
-    "muted": "#B6C2D1",
-    "primary": "#38BDF8",
-    "ctl": "#34D399",
-    "atl": "#FB7185",
+    "background": "#0B1017",
+    "panel": "#151F2B",
+    "border": "#405063",
+    "text": "#F8FAFC",
+    "muted": "#D0D9E4",
+    "primary": "#22D3EE",
+    "ctl": "#A3E635",
+    "atl": "#F472B6",
     "tsb": "#A78BFA",
-    "sleep": "#E879F9",
-    "resting_hr": "#FBBF24",
+    "sleep": "#60A5FA",
+    "resting_hr": "#FB923C",
     "load": "#94A3B8",
-    "power_avg": "#38BDF8",
+    "power_avg": "#22D3EE",
     "power_normalized": "#FB923C",
-    "power_best": "#C084FC",
-    "weekly_trend": "#E2E8F0",
-    "battery_min": "#38BDF8",
-    "battery_max": "#C084FC",
-    "hrv": "#C084FC",
-    "elevation": "#2DD4BF",
+    "power_best": "#A78BFA",
+    "weekly_trend": "#FACC15",
+    "battery_min": "#22D3EE",
+    "battery_max": "#A78BFA",
+    "hrv": "#F472B6",
+    "elevation": "#A3E635",
 }
 
 SPORT_COLORS = {
